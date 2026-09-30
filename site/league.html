@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>My League – Trade Scale</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚖️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <nav class="pagenav" aria-label="Pages"><a href="index.html">Trade calculator</a><a href="league.html" aria-current="page">My league</a></nav>
+      <h1>My League</h1>
+      <p>See where your team stands, what it needs, and which trades and pickups fix it.</p>
+    </div>
+    <nav class="sports" aria-label="Sport" id="sports"></nav>
+  </header>
+  <div class="settings" id="settings"></div>
+  <p class="status" id="status" aria-live="polite">Loading players...</p>
+  <div id="app"></div>
+  <footer>
+    Grades compare each position's starters with the league average once four or more rosters are in, or with what an average team your league's size would start. Trade ideas only include deals within about 15% of even value that improve your lineup without gutting your partner's. Leagues and rosters are saved in this browser only.
+  </footer>
+</div>
+<script src="assets/core.js"></script>
+<script src="assets/league.js"></script>
+</body>
+</html>
