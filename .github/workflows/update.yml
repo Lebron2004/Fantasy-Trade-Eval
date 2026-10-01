@@ -2,14 +2,14 @@ name: Update players and deploy
 
 on:
   schedule:
-    - cron: "0 11 * * *"
-  workflow_dispatch:
+    - cron: "0 11 * * *"   # every day at 11:00 UTC (7 AM Eastern during daylight time)
+  workflow_dispatch:        # "Run workflow" button on the Actions tab
   push:
     branches: [main]
-    paths: ["site/*.html", "site/assets/**", "scripts/**", ".github/workflows/**"]
+    paths: ["site/*.html", "site/assets/**", "scripts/**", "leagues.json", ".github/workflows/**"]
 
 permissions:
-  contents: write
+  contents: write   # commit the refreshed data back to the repo
   pages: write
   id-token: write
 
@@ -25,11 +25,30 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
       - name: Pull latest players, values and team changes
         run: python scripts/update_players.py
+
+      - name: Build props data (game logs, matchups, scheme splits)
+        continue-on-error: true   # if nflverse hiccups, keep yesterday's props and still deploy everything else
+        run: |
+          pip install --quiet pandas pyarrow
+          python scripts/update_props.py
+
+      - name: Sync ESPN and Yahoo leagues
+        continue-on-error: true   # an expired login shouldn't block the rest of the daily update
+        run: python scripts/sync_leagues.py
+        env:
+          ESPN_S2: ${{ secrets.ESPN_S2 }}
+          ESPN_SWID: ${{ secrets.ESPN_SWID }}
+          YAHOO_CLIENT_ID: ${{ secrets.YAHOO_CLIENT_ID }}
+          YAHOO_CLIENT_SECRET: ${{ secrets.YAHOO_CLIENT_SECRET }}
+          YAHOO_REFRESH_TOKEN: ${{ secrets.YAHOO_REFRESH_TOKEN }}
+
       - name: Commit refreshed data
         run: |
           git config user.name "trade-scale-bot"
@@ -39,9 +58,12 @@ jobs:
           git commit -m "Player data $(date -u +%Y-%m-%d)"
           git pull --rebase -X theirs origin main
           git push
+
       - uses: actions/configure-pages@v5
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
+
       - id: deploy
         uses: actions/deploy-pages@v4
