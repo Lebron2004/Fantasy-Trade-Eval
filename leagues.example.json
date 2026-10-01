@@ -1,0 +1,5 @@
+[
+  {"platform": "espn",  "sport": "nfl", "league_id": "12345678"},
+  {"platform": "yahoo", "sport": "nfl", "league_id": "987654"},
+  {"platform": "espn",  "sport": "nba", "league_id": "55555555", "dynasty": true}
+]
