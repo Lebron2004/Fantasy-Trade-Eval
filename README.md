@@ -27,18 +27,61 @@ From then on it runs by itself every day at 11:00 UTC. To change the time, edit 
 
 ## How player values work
 
-Every value (1–100) blends two things:
+Every value (1–100) blends two things, and the **Value by** slider on both pages sets the mix:
 
 - **Track record**: fantasy points actually scored, this season plus last season. Last season counts for less as the current season goes on.
-- **Outlook**: what the player should do from here. For football and basketball, that's Sleeper's player rankings. For baseball and hockey, it's per-game production projected over a full healthy season, adjusted for age.
+- **Outlook**: what the player should do from here.
 
-The **Value by** slider on both pages sets the mix. Slide toward Track record to trust proven production, or toward Outlook to buy upside. Dynasty mode also rewards youth and discounts players past their peak age.
+**Football outlook** is a real projection model, rebuilt every morning:
+
+1. **Expected points per game**, blended from four signals: Sleeper's projections (40%), the last 4 games (25%), this season's average (20%), and last season's average (15%).
+2. **Defense vs position**: for all 32 defenses, how many fantasy points they allow to QBs, RBs, WRs, and TEs compared with average. Last season's numbers act as a starting point and this season takes over as games are played.
+3. **Rest-of-season schedule**: each player's remaining opponents, rated by how they defend his position.
+4. **Health**: injury designations reduce expected production (IR the most, Questionable barely).
+5. **Value over replacement**: rest-of-season points above what a free agent at the same position would score. That's why a top TE can be worth more than a WR who scores more.
+6. A final 30% check against Sleeper's market rankings, so the model never drifts too far from consensus.
+
+**Basketball** adds per-game production (adjusted for age) to Sleeper's rankings. **Baseball** and **hockey** use per-game production projected over a full season, adjusted for age; hockey also adjusts for the strength of each team's remaining schedule.
+
+Dynasty mode also rewards youth and discounts players past their peak age.
+
+## ESPN and Yahoo leagues
+
+Sleeper leagues sync right from the My league page. ESPN and Yahoo require a login, so they sync through your daily GitHub job instead, with your login stored as GitHub Secrets (encrypted, never visible in the repo or on the site).
+
+**1. List your leagues** in `leagues.json` at the top of the repo (see `leagues.example.json`):
+
+```json
+[
+  {"platform": "espn",  "sport": "nfl", "league_id": "12345678"},
+  {"platform": "yahoo", "sport": "nfl", "league_id": "987654"}
+]
+```
+
+Find the league ID in your league's web address: ESPN shows `leagueId=12345678`; Yahoo shows `football.fantasysports.yahoo.com/f1/987654`. Add `"dynasty": true` for dynasty leagues.
+
+**2. ESPN private leagues** (public leagues need nothing): on a computer, log in to ESPN Fantasy in Chrome, open DevTools (Cmd+Option+I) → **Application** → **Cookies** → `https://fantasy.espn.com`. Copy the values of `espn_s2` and `SWID` (keep the curly braces in SWID). In your repo go to **Settings → Secrets and variables → Actions → New repository secret** and add `ESPN_S2` and `ESPN_SWID`. These cookies last about a year; if ESPN sync starts failing, grab fresh ones.
+
+**3. Yahoo** (one-time, about 5 minutes):
+1. Create an app at https://developer.yahoo.com/apps/create/ with Redirect URI `https://localhost:8080` and API permission **Fantasy Sports: Read**.
+2. On your computer, run `python scripts/yahoo_auth.py`, paste the Client ID and Secret, open the link it prints, approve, and paste back the `code=` value from the address bar of the page that fails to load.
+3. Add the three secrets it prints: `YAHOO_CLIENT_ID`, `YAHOO_CLIENT_SECRET`, `YAHOO_REFRESH_TOKEN`.
+
+**4. Run the workflow** (Actions → Update players and deploy → Run workflow). Your leagues then appear on the My league page under **Synced from ESPN or Yahoo**, and refresh every morning. The page tells you which team is yours automatically.
+
+Heads up: synced rosters and team names are published with your site (the secrets are not). Player matching uses ESPN and Yahoo IDs for football and names elsewhere; the sync log and the import list show how many players couldn't be matched.
+
+## AI GM
+
+Both pages have an **Ask the AI GM** panel. It sends everything the page knows (your lineup, bench, values, matchups, position grades, other teams' needs, the model's trade ideas, and pickups) to Claude, which searches the web for the latest injury news and depth charts before answering.
+
+It uses your own Anthropic API key: create one at https://console.anthropic.com, add a few dollars of credit, and paste it into the panel. Most questions cost a few cents. The key is saved only in your browser and sent only to Anthropic; don't save it on a shared computer. If your Anthropic organization hasn't enabled web search, the AI still answers but without today's news (an admin can turn it on in the Console).
 
 ## Where the data comes from
 
 | Sport | Rosters and injuries | How values are set |
 |---|---|---|
-| Football | Sleeper public API | Track record from Sleeper season stats, outlook from Sleeper's rankings |
+| Football | Sleeper (players, stats, projections), ESPN public scoreboard (schedule) | Projection model above |
 | Basketball | Sleeper public API | Track record from Sleeper season stats, outlook from Sleeper's rankings |
 | Baseball | MLB Stats API (official) | Both from fantasy points (totals vs. per-game rate) |
 | Hockey | NHL web and stats APIs | Both from fantasy points (totals vs. per-game rate) |
@@ -82,6 +125,10 @@ site/league.html               league analysis
 site/assets/style.css          shared styles
 site/assets/core.js            shared data loading, valuation, search
 site/assets/trade.js           trade calculator logic
-site/assets/league.js          league sync, lineups, needs, trade ideas, pickups
+site/assets/league.js          league sync, lineups, needs, trade ideas, pickups, matchups
+site/assets/ai.js              AI GM panel (Claude + web search)
+scripts/sync_leagues.py        ESPN and Yahoo league sync (runs in the daily job)
+scripts/yahoo_auth.py          one-time Yahoo login helper (run on your computer)
+leagues.json                   which ESPN/Yahoo leagues to sync
 site/data/                     written by the script (don't edit)
 ```
