@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Props – Trade Scale</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚖️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <nav class="pagenav" aria-label="Pages"><a href="index.html">Trade calculator</a><a href="league.html">My league</a><a href="props.html" aria-current="page">Props</a></nav>
+      <h1>Props</h1>
+      <p>Hit rates, matchups, and a projection for any player prop. Football for now.</p>
+    </div>
+  </header>
+  <div id="picker" style="margin-bottom:12px"></div>
+  <p class="status" id="status" aria-live="polite">Loading...</p>
+  <div id="app"></div>
+  <footer>
+    Stats, play-by-play, betting lines, and charting data from nflverse (CC-BY 4.0), with charting by FTN Data (ftndata.com via nflverse). Everything here is historical data and a statistical estimate, not a guarantee. Past results don't promise future ones, and the projection can't see injuries, weather changes, or news after the morning update.
+    <p class="gamble">Bet only what you can afford to lose. If gambling stops being fun, call or text 1-800-GAMBLER (US) for free, confidential help.</p>
+  </footer>
+</div>
+<script src="assets/core.js"></script>
+<script src="assets/props.js"></script>
+</body>
+</html>
