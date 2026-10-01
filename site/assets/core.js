@@ -36,9 +36,9 @@ const TS = (() => {
     if (pools[sport]) return pools[sport];
     const d = await getJSON(`data/${sport}.json`);
     const list = d.players.map(r => {
-      const [id,name,team,pos,born,value,inj,prod,outlook,elig] = r;
+      const [id,name,team,pos,born,value,inj,prod,outlook,elig,x] = r;
       return {id:String(id), name, team, pos, born, value, inj: inj || "", prod: prod ?? null, outlook: outlook ?? null,
-              elig: String(elig || pos || "").split("/").filter(Boolean), key: norm(name)};
+              elig: String(elig || pos || "").split("/").filter(Boolean), x: x || {}, key: norm(name)};
     });
     list.updated = d.updated;
     list.byId = new Map(list.map(p => [p.id, p]));
@@ -113,7 +113,52 @@ const TS = (() => {
     return bits.join(", ");
   }
   const toItem = p => ({id:p.id, name:p.name, team:p.team, pos:p.pos, born:p.born, value:p.value, inj:p.inj,
-                        prod:p.prod, outlook:p.outlook, elig:p.elig});
+                        prod:p.prod, outlook:p.outlook, elig:p.elig, x:p.x || {}});
+
+  /* ---------- Matchups and form (football has the most detail; hockey has schedule strength) ---------- */
+  function matchupWord(mu){
+    if (mu == null) return null;
+    if (mu >= 1.15) return ["Great", "mu-great"];
+    if (mu >= 1.05) return ["Good", "mu-good"];
+    if (mu > 0.95) return ["Neutral", "mu-neutral"];
+    if (mu > 0.85) return ["Tough", "mu-tough"];
+    return ["Brutal", "mu-brutal"];
+  }
+  function matchupTag(p){
+    const x = p.x || {};
+    if (!x.nx) return null;
+    if (x.nx === "BYE") return el("span", {class:"mu mu-bye", text:"Bye"});
+    const w = matchupWord(x.mu);
+    return el("span", {class:"mu " + (w ? w[1] : ""), title: w ? `${w[0]} matchup: this defense allows ${Math.round(Math.abs(x.mu - 1) * 100)}% ${x.mu >= 1 ? "more" : "fewer"} points than average to ${p.pos}s` : ""},
+      x.nx + (w ? ` · ${w[0]}` : ""));
+  }
+  function insightText(p){
+    const x = p.x || {}, bits = [];
+    if (x.form != null && x.ppg != null){
+      const d = x.form - x.ppg;
+      bits.push(`last 4: ${x.form} ppg${Math.abs(d) >= 2 ? (d > 0 ? " (heating up)" : " (cooling off)") : ""}`);
+    } else if (x.ppg != null) bits.push(`${x.ppg} ppg`);
+    if (x.proj != null) bits.push(`projected ${x.proj}`);
+    if (x.use != null) bits.push(`${x.use} touches+targets/g`);
+    if (x.sos != null) bits.push(`rest-of-season schedule ${x.sos >= 1.04 ? "easy" : x.sos <= 0.96 ? "hard" : "average"}`);
+    return bits.join(", ");
+  }
+  function aiLine(p, sport){
+    const x = p.x || {};
+    const parts = [`${p.name} (${p.pos}, ${p.team || "FA"}${ageOf(p.born) != null ? ", age " + ageOf(p.born) : ""})`,
+      `value ${Math.round(adjusted(p, sport))}`];
+    if (p.prod != null) parts.push(`track record ${p.prod}`);
+    if (p.outlook != null) parts.push(`outlook ${p.outlook}`);
+    if (p.inj) parts.push(`injury: ${p.inj}`);
+    if (x.ppg != null) parts.push(`${x.ppg} ppg this season`);
+    if (x.form != null) parts.push(`${x.form} ppg last 4`);
+    if (x.proj != null) parts.push(`${x.proj} projected ppg`);
+    if (x.use != null) parts.push(`${x.use} touches+targets/g`);
+    if (x.nx) parts.push(`next: ${x.nx}${x.mu != null ? ` (defense factor ${x.mu})` : ""}`);
+    if (x.sos != null) parts.push(`rest-of-season schedule factor ${x.sos}`);
+    if (x.gl != null) parts.push(`${x.gl} games left`);
+    return parts.join(", ");
+  }
 
   function seg(label, key, options, after){
     const wrap = el("span");
@@ -200,5 +245,6 @@ const TS = (() => {
   }
 
   return {SPORTS, sportName, store, settings, setSetting, onSettings, getJSON, norm, pools, loadSport,
-          ageOf, adjusted, packageScore, el, injTag, metaText, splitText, toItem, settingsBar, makeSearch, ago};
+          ageOf, adjusted, packageScore, el, injTag, metaText, splitText, toItem, settingsBar, makeSearch, ago,
+          matchupWord, matchupTag, insightText, aiLine};
 })();

@@ -19,7 +19,7 @@ function refreshTradeItems(sport){
     if (it.custom) return;
     const p = pool.byId.get(String(it.id));
     if (!p){ it.gone = true; return; }
-    Object.assign(it, {gone:false, name:p.name, team:p.team, pos:p.pos, born:p.born, inj:p.inj, prod:p.prod, outlook:p.outlook, elig:p.elig});
+    Object.assign(it, {gone:false, name:p.name, team:p.team, pos:p.pos, born:p.born, inj:p.inj, prod:p.prod, outlook:p.outlook, elig:p.elig, x:p.x});
     if (!it.edited) it.value = p.value;
   });
   const t = state.trades[sport]; fix(t.send); fix(t.get);
@@ -43,12 +43,15 @@ function renderSide(side){
   $("empty-"+side).hidden = items.length > 0;
   items.forEach((p, i) => {
     const n = el("div", {class:"name", text:p.name}); const tg = injTag(p); if (tg) n.append(tg);
+    const mt = TS.matchupTag(p); if (mt) n.append(mt);
     let m = metaText(p);
     if (p.gone) m += ", no longer on a roster";
     const adj = Math.round(adjusted(p, sport));
     if (p.edited) m += ", your value";
     const split = splitText(p);
-    const info = el("div", {}, n, el("div", {class:"meta", text:m}), split ? el("div", {class:"split", text:split}) : null);
+    const ins = TS.insightText(p);
+    const info = el("div", {}, n, el("div", {class:"meta", text:m}), split ? el("div", {class:"split", text:split}) : null,
+      ins ? el("div", {class:"insight", text:ins}) : null);
     const v = el("input", {class:"val", type:"number", min:0, max:150, value:adj, "aria-label":`Value for ${p.name}`});
     v.onchange = () => { p.value = Math.max(0, Math.min(150, Number(v.value) || 0)); p.edited = true; persist(); renderSide(side); renderScale(); };
     const x = el("button", {class:"x", text:"×", "aria-label":`Remove ${p.name}`, onclick: () => { items.splice(i,1); persist(); renderSide(side); renderScale(); }});
@@ -143,6 +146,31 @@ $("saveBtn").onclick = () => {
   $("saveBtn").textContent = "Saved"; setTimeout(() => $("saveBtn").textContent = "Save trade", 1400);
 };
 $("moreMoves").onclick = () => { movesShown += 30; renderMoves(); };
+
+/* ---------- AI GM ---------- */
+function tradePrompt(q){
+  const t = trade(), sp = state.sport, name = TS.sportName(sp);
+  const fmt = {ppr:"PPR", half:"half PPR", std:"standard"}[settings.scoring];
+  const lg = `${settings.mode}${sp === "nfl" ? `, ${fmt} scoring, ${settings.qb === "sf" ? "superflex" : "1 QB"}` : ""}`;
+  const lines = list => list.length ? list.map(p => "- " + (p.custom ? `${p.name} (custom player, value ${p.value})` : TS.aiLine(p, sp))).join("\n") : "- (nobody yet)";
+  return `Sport: ${name}. League: ${lg}. The app weighs outlook ${settings.upside}% and track record ${100 - settings.upside}%.
+
+I SEND:
+${lines(t.send)}
+
+I RECEIVE:
+${lines(t.get)}
+
+The app's verdict: ${$("verdict").textContent}. ${$("detail").textContent}
+
+My question: ${q || "Should I make this trade?"}`;
+}
+AI.panel($("aiHost"), {
+  intro: "A second opinion on the trade above, with today's injury news and depth charts checked.",
+  presets: ["Should I make this trade?", "What would make this fair?", "Who wins this long-term?"],
+  system: () => AI.system(TS.sportName(state.sport)),
+  buildPrompt: tradePrompt
+});
 
 (async () => {
   renderAll(); renderSaved();

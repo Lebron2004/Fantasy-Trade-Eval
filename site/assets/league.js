@@ -16,8 +16,9 @@ const GROUPS = {nfl:["QB","RB","WR","TE","K","DEF"], nba:["PG","SG","SF","PF","C
 // Flex slots: which positions can fill them. "*" = anyone, "H" = any hitter, "S" = any skater.
 const FLEX = {
   nfl: {FLEX:["RB","WR","TE"], SUPER_FLEX:["QB","RB","WR","TE"], REC_FLEX:["WR","TE"], WRRB_FLEX:["WR","RB"]},
-  nba: {G:["PG","SG","G"], F:["SF","PF","F"], UTIL:"*"},
-  mlb: {UTIL:"H", P:["SP","RP","P"], OF:["OF","LF","CF","RF"], CI:["1B","3B"], MI:["2B","SS"], IF:["1B","2B","3B","SS"]},
+  nba: {G:["PG","SG","G"], F:["SF","PF","F"], UTIL:"*", "SG/SF":["SG","SF"], "G/F":["PG","SG","SF","PF","G","F"],
+        "PF/C":["PF","C"], "F/C":["SF","PF","C","F"]},
+  mlb: {UTIL:"H", DH:"H", P:["SP","RP","P"], OF:["OF","LF","CF","RF"], CI:["1B","3B"], MI:["2B","SS"], IF:["1B","2B","3B","SS"]},
   nhl: {UTIL:"S", F:["C","LW","RW"], W:["LW","RW"]}
 };
 const SKIP_SLOTS = new Set(["BN","IR","TAXI","DL","LB","DB","IDP_FLEX","DE","DT","CB","S","ILB","OLB"]);
@@ -52,13 +53,14 @@ function makeEngine(L){
   const order = L.slots.map((s, i) => ({s, i, w: slotWidth(sp, s)})).sort((a, b) => a.w - b.w || a.i - b.i);
 
   const resolve = ids => ids.map(id => pool.byId.get(String(id))).filter(Boolean);
-  function lineup(players){
-    const sorted = [...players].sort(byVal), used = new Set(), starters = new Array(L.slots.length).fill(null);
+  function lineup(players, vf){
+    const v = vf || val;
+    const sorted = vf ? [...players].sort((a, b) => v(b) - v(a)) : [...players].sort(byVal), used = new Set(), starters = new Array(L.slots.length).fill(null);
     for (const o of order){
       const p = sorted.find(q => !used.has(q.id) && accepts(sp, o.s, q));
       if (p){ used.add(p.id); starters[o.i] = p; }
     }
-    let total = 0; starters.forEach(p => { if (p) total += val(p); });
+    let total = 0; starters.forEach(p => { if (p) total += v(p); });
     return {starters, bench: sorted.filter(p => !used.has(p.id)), total};
   }
   function profile(players){
@@ -258,6 +260,114 @@ async function refreshSleeper(L, btn){
   }
 }
 
+let lastIdeas = [], lastPickups = null;
+
+/* ---------- This week: matchup-adjusted lineup ---------- */
+const OUT_NOW = new Set(["Out", "IR", "PUP", "Sus", "NA"]);
+function weekFactor(p){
+  const x = p.x || {};
+  if (x.nx === "BYE" || OUT_NOW.has(p.inj)) return 0;
+  let f = p.inj === "Doubtful" ? 0.25 : p.inj === "Questionable" ? 0.9 : 1;
+  if (x.mu != null) f *= 1 + (x.mu - 1);   // a single game swings more than a season
+  return f;
+}
+function renderThisWeek(app, L, A, me){
+  const {E} = A;
+  const wv = p => E.val(p) * weekFactor(p);
+  const week = E.lineup(me.roster, wv);
+  const seasonIds = new Set(me.prof.lu.starters.filter(Boolean).map(p => p.id));
+  const weekIds = new Set(week.starters.filter(Boolean).map(p => p.id));
+  const ins = week.starters.filter(p => p && !seasonIds.has(p.id));
+  const outs = me.prof.lu.starters.filter(p => p && !weekIds.has(p.id));
+  const panel = el("section", {class:"panel"}, el("h2", {text:"This week"}),
+    el("p", {class:"sub", text:"Your best lineup for this week's games: each player's value adjusted for his opponent's defense against his position, byes, and injury designations."}));
+  if (ins.length){
+    const sum = el("div", {class:"summary"});
+    sum.textContent = ins.map((p, i) => {
+      const o = outs[i];
+      const why = o ? (o.x && o.x.nx === "BYE" ? `${o.name} is on bye` : OUT_NOW.has(o.inj) ? `${o.name} is ${o.inj === "IR" ? "on IR" : "out"}`
+        : o.inj === "Doubtful" ? `${o.name} is doubtful` : `${p.name} has the better matchup (${(p.x || {}).nx || ""})`) : "";
+      return `Start ${p.name}${o ? ` over ${o.name}` : ""}${why ? `: ${why}.` : "."}`;
+    }).join(" ");
+    panel.append(sum);
+  } else panel.append(el("div", {class:"summary", text:"Your season lineup is also your best lineup this week. No changes needed."}));
+  const ul = el("ul", {class:"lu"});
+  week.starters.forEach((p, i) => {
+    if (!p){ ul.append(el("li", {class:"empty-slot"}, el("span", {class:"slot", text:L.slots[i]}), el("span", {class:"nm", text:"Nobody available"}), el("span"))); return; }
+    const nm = el("span", {class:"nm"}, p.name); const tg = injTag(p); if (tg) nm.append(tg);
+    const mt = TS.matchupTag(p); if (mt) nm.append(mt);
+    nm.append(el("small", {text:`${p.pos}, ${p.team}`}));
+    ul.append(el("li", {}, el("span", {class:"slot", text:L.slots[i]}), nm, el("span", {class:"v", text:fmt(wv(p))})));
+  });
+  panel.append(ul);
+  app.append(panel);
+}
+
+/* ---------- Defense vs position table (football) ---------- */
+let defenseData = null, defenseSort = "RB";
+async function renderDefense(app){
+  const box = el("details", {class:"panel"});
+  box.append(el("summary", {text:"Defense vs position"}));
+  const body = el("div");
+  box.append(body);
+  app.append(box);
+  try { defenseData = defenseData || await TS.getJSON("data/nfl-defense.json"); }
+  catch(e){ body.append(el("p", {class:"sub", text:"Defense ratings show up after the next daily data run."})); return; }
+  const draw = () => {
+    body.innerHTML = "";
+    body.append(el("p", {class:"sub", text:"Fantasy points each defense allows to each position compared with the league average, blending this season with last. Green means easier for your players. Click a column to sort."}));
+    const POS = ["QB","RB","WR","TE"];
+    const rows = Object.entries(defenseData.teams || {}).sort((a, b) => b[1][defenseSort][0] - a[1][defenseSort][0]);
+    const head = el("tr", {}, el("th", {text:"Defense"}), el("th", {text:"Next game"}),
+      ...POS.map(p => el("th", {style:"cursor:pointer", text: p + (p === defenseSort ? " ▾" : ""), onclick: () => { defenseSort = p; draw(); }})));
+    const tb = el("tbody");
+    rows.forEach(([team, r]) => {
+      tb.append(el("tr", {}, el("td", {text:team}), el("td", {text:(defenseData.next || {})[team] || "-"}),
+        ...POS.map(p => {
+          const f = r[p][0], pct = Math.round((f - 1) * 100);
+          const cls = f >= 1.12 ? "g2" : f >= 1.04 ? "g1" : f <= 0.88 ? "b2" : f <= 0.96 ? "b1" : "";
+          return el("td", {class:"f " + cls, title:`Ranks ${r[p][1]} of ${rows.length} (1 = toughest)`, text:(pct > 0 ? "+" : "") + pct + "%"});
+        })));
+    });
+    body.append(el("div", {class:"tablewrap"}, el("table", {class:"rank-t def-t"}, el("thead", {}, head), tb)));
+  };
+  draw();
+}
+
+/* ---------- AI GM context ---------- */
+function leaguePrompt(L, A, me, q){
+  const {E} = A, sp = L.sport;
+  const fmtS = {ppr:"PPR", half:"half PPR", std:"standard"}[settings.scoring];
+  const line = p => TS.aiLine(p, sp);
+  const out = [];
+  out.push(`League: ${L.name} (${L.source === "manual" ? "entered by hand" : L.source}), ${L.size} teams, ${TS.sportName(sp)}, ${settings.mode}${sp === "nfl" ? `, ${fmtS}, ${settings.qb === "sf" ? "superflex" : "1 QB"}` : ""}.`);
+  out.push(`Starting lineup slots: ${L.slots.join(", ")}. The app weighs outlook ${settings.upside}% and track record ${100 - settings.upside}%.`);
+  out.push("", `MY TEAM: ${me.name}`, "Starters:");
+  me.prof.lu.starters.forEach((p, i) => out.push(`- ${L.slots[i]}: ${p ? line(p) : "EMPTY"}`));
+  out.push("Bench:");
+  me.prof.lu.bench.forEach(p => out.push(`- ${line(p)}`));
+  out.push("", "Position grades vs " + (A.useLeague ? "league average" : "an average team") + ":");
+  me.shownGroups.forEach(g => {
+    const r = A.ranks[me.id] && A.ranks[me.id][g];
+    out.push(`- ${g}: ${gradeInfo(me.grades[g])[1]} (${Math.round(me.grades[g] * 100)}% of average${r ? `, ranked ${r} of ${A.fullCount}` : ""})`);
+  });
+  const others = A.teams.filter(t => t.id !== me.id && t.roster.length);
+  if (others.length){
+    out.push("", "OTHER TEAMS (top players, needs):");
+    others.slice(0, 15).forEach(t => out.push(`- ${t.name}: needs ${t.needs.slice(0, 2).join(", ") || "nothing"}; strong at ${t.strengths.slice(0, 2).join(", ") || "nothing"}; top: ${[...t.roster].sort(E.byVal).slice(0, 5).map(p => `${p.name} ${p.pos} ${fmt(E.val(p))}`).join(", ")}`));
+  }
+  if (lastIdeas.length){
+    out.push("", "TRADE IDEAS FROM THE APP'S MODEL:");
+    lastIdeas.slice(0, 6).forEach(f => out.push(`- Send ${f.give.map(p => p.name).join(" + ")} to ${f.team.name} for ${f.get.map(p => p.name).join(" + ")} (my lineup +${fmt(f.myGain)}, theirs ${f.theirGain >= 0 ? "+" : ""}${fmt(f.theirGain)})`));
+  }
+  if (lastPickups){
+    const pk = [...lastPickups.starts.map(s => `${s.p.name} (${s.p.pos}, would start at ${s.slot}, +${fmt(s.gain)})`), ...lastPickups.stash.map(s => `${s.p.name} (${s.p.pos}, depth)`)];
+    if (pk.length) out.push("", `WAIVER OPTIONS (${lastPickups.exact ? "confirmed available" : "probably available"}): ${pk.join("; ")}`);
+  }
+  out.push("", `My question: ${q || "What are my best moves this week?"}`);
+  return out.join("\n");
+}
+
 /* ---------- Views ---------- */
 function renderSetup(app){
   const has = sportLeagues();
@@ -331,6 +441,32 @@ function renderSetup(app){
     el("div", {class:"actions", style:"justify-content:flex-start"}, create));
   grid.append(left, right);
   wrap.append(grid);
+  const synced = el("div", {style:"margin-top:18px;border:1px solid var(--line);border-radius:14px;padding:16px"},
+    el("h3", {style:"margin-top:0", text:"Synced from ESPN or Yahoo"}));
+  const slist = el("ul", {class:"synced"}, el("li", {class:"split", text:"Checking for synced leagues..."}));
+  synced.append(slist);
+  wrap.append(synced);
+  TS.getJSON("data/leagues/index.json").then(idx => {
+    const mine = (idx || []).filter(e => e.sport === sport);
+    slist.innerHTML = "";
+    if (!mine.length) throw new Error("none");
+    mine.forEach(e => {
+      const b = el("button", {class:"btn", text: e.ok === false ? "Retry later" : "Import", disabled: e.ok === false ? "" : false});
+      b.onclick = async () => {
+        b.disabled = true; b.textContent = "Importing...";
+        try {
+          const L = await TS.getJSON(`data/leagues/${e.id}.json`);
+          leagues = leagues.filter(x => x.id !== L.id).concat(L);
+          active[sport] = L.id; view.creating = false; saveLeagues(); applyPrefs(L); render();
+        } catch(err){ b.disabled = false; b.textContent = "Couldn't load, try again"; }
+      };
+      slist.append(el("li", {class:"bar-row", style:"justify-content:space-between;border-bottom:1px solid var(--line);padding:8px 0"},
+        el("span", {}, el("strong", {text:e.name}), el("small", {class:"split", text: e.ok === false ? `  ${e.error || "Last sync failed"}` : `  ${e.source === "espn" ? "ESPN" : "Yahoo"}, synced ${TS.ago(e.syncedAt)}${e.unmatched ? `, ${e.unmatched} players not matched` : ""}`})), b));
+    });
+  }).catch(() => {
+    slist.innerHTML = "";
+    slist.append(el("li", {class:"sub", style:"margin:0", text:"No ESPN or Yahoo leagues are set up yet. Those platforms need a login, so they sync through your daily GitHub job: list your league in leagues.json and add your login secrets. The README walks through it step by step."}));
+  });
   if (has.length) wrap.append(el("div", {class:"actions", style:"justify-content:flex-start"},
     el("button", {class:"btn", text:"Back to my league", onclick: () => { view.creating = false; render(); }})));
   app.append(wrap);
@@ -350,6 +486,8 @@ function renderLeagueBar(app, L, A){
   if (L.source === "sleeper"){
     const rb = el("button", {class:"btn", text:"Refresh rosters"}); rb.onclick = () => refreshSleeper(L, rb);
     btns.append(el("small", {class:"split", text:`Synced ${TS.ago(L.syncedAt)}`}), rb);
+  } else if (L.source === "espn" || L.source === "yahoo"){
+    btns.append(el("small", {class:"split", text:`${L.source === "espn" ? "ESPN" : "Yahoo"} rosters from ${TS.ago(L.syncedAt)}, refreshed every morning`}));
   } else {
     btns.append(el("button", {class:"btn", text: view.editing ? "Done editing" : "Edit teams", onclick: () => { view.editing = !view.editing; render(); }}));
   }
@@ -413,7 +551,9 @@ function renderAnalysis(app, L, A){
   me.prof.lu.starters.forEach((p, i) => {
     if (!p){ ul.append(el("li", {class:"empty-slot"}, el("span", {class:"slot", text:L.slots[i]}), el("span", {class:"nm", text:"Empty, nobody on your roster fits"}), el("span"))); return; }
     const nm = el("span", {class:"nm"}, p.name); const tg = injTag(p); if (tg) nm.append(tg);
+    const mt = TS.matchupTag(p); if (mt) nm.append(mt);
     nm.append(el("small", {text:`${p.pos}, ${p.team}${p.prod != null ? `, track record ${p.prod}` : ""}${p.outlook != null ? `, outlook ${p.outlook}` : ""}`}));
+    const ins = TS.insightText(p); if (ins) nm.append(el("small", {class:"insight", text:ins}));
     ul.append(el("li", {}, el("span", {class:"slot", text:L.slots[i]}), nm, el("span", {class:"v", text:fmt(E.val(p))})));
   });
   lu.append(ul);
@@ -422,6 +562,7 @@ function renderAnalysis(app, L, A){
     const bu = el("ul", {class:"lu"});
     me.prof.lu.bench.forEach(p => {
       const nm = el("span", {class:"nm"}, p.name); const tg = injTag(p); if (tg) nm.append(tg);
+      const mt = TS.matchupTag(p); if (mt) nm.append(mt);
       nm.append(el("small", {text:`${p.pos}, ${p.team}`}));
       bu.append(el("li", {}, el("span", {class:"slot", text:"BN"}), nm, el("span", {class:"v", text:fmt(E.val(p))})));
     });
@@ -482,6 +623,7 @@ function renderAnalysis(app, L, A){
     ti.append(box);
     setTimeout(() => {
       const ideas = tradeIdeas(A, me, view.ideaTeam);
+      lastIdeas = ideas;
       box.innerHTML = "";
       if (!ideas.length) box.append(el("p", {class:"empty", style:"margin:0", text:"No even-value trade improves your lineup right now. Try the other team filter, or lean the Value by slider the other way."}));
       ideas.forEach(f => box.append(ideaCard(f, me, E, L)));
@@ -499,8 +641,12 @@ function renderAnalysis(app, L, A){
   }
   app.append(ti);
 
+  // This week (football): start/sit using matchups, byes, and injury designations
+  if (me.roster.some(p => p.x && p.x.nx)) renderThisWeek(app, L, A, me);
+
   // Pickups
   const pk = pickups(A, me, L);
+  lastPickups = pk;
   const pu = el("section", {class:"panel"}, el("h2", {text:"Waiver pickups"}),
     el("p", {class:"sub", text: pk.exact ? "Players nobody in your league has rostered." : "Players ranked outside what a league your size usually rosters, so they're probably available. Check your league to confirm."}));
   const plist = el("ul", {class:"lu"});
@@ -532,6 +678,20 @@ function renderAnalysis(app, L, A){
     pr.append(el("div", {class:"tablewrap"}, tbl));
     app.append(pr);
   }
+  if (L.sport === "nfl") renderDefense(app);
+  renderAIPanel(app, L, A, me);
+}
+function renderAIPanel(app, L, A, me){
+  const box = el("section", {class:"panel"}, el("h2", {text:"Ask the AI GM"}));
+  const host = el("div");
+  box.append(host);
+  app.append(box);
+  AI.panel(host, {
+    intro: "It reads your whole league from this page, checks today's injury news and depth charts, and tells you what to do.",
+    presets: ["What are my best moves this week?", "Who should I start this week?", "Find me a trade for my weakest spot", "Who should I pick up?"],
+    system: () => AI.system(TS.sportName(L.sport)),
+    buildPrompt: q => leaguePrompt(L, A, me, q)
+  });
 }
 const ordinal = n => n + (["th","st","nd","rd"][(n % 100 - 20) % 10] || ["th","st","nd","rd"][n % 100] || "th");
 
@@ -571,6 +731,19 @@ function renderSports(){
   const nav = $("sports"); nav.innerHTML = "";
   SPORTS.forEach(([id, label]) => nav.append(el("button", {text:label, "aria-pressed": String(sport === id), onclick: () => switchSport(id)})));
 }
+const refreshedFiles = new Set();
+async function refreshFromFile(L){
+  if (refreshedFiles.has(L.id)) return;
+  refreshedFiles.add(L.id);
+  try {
+    const fresh = await TS.getJSON(`data/leagues/${L.id}.json`);
+    if (fresh.syncedAt === L.syncedAt) return;
+    const keepMine = fresh.teams.some(t => t.id === L.myTeamId) ? L.myTeamId : fresh.myTeamId;
+    Object.assign(L, {teams: fresh.teams, slots: fresh.slots, benchSize: fresh.benchSize, size: fresh.size,
+                      syncedAt: fresh.syncedAt, name: fresh.name, myTeamId: keepMine});
+    saveLeagues(); render();
+  } catch(e){ /* keep what we have */ }
+}
 function render(){
   renderSports();
   TS.settingsBar($("settings"), sport, render);
@@ -582,6 +755,7 @@ function render(){
   const L = current();
   if (!L || view.creating){ renderSetup(app); return; }
   active[sport] = L.id;
+  if (L.source === "espn" || L.source === "yahoo") refreshFromFile(L);
   const mine = L.teams.find(t => t.id === L.myTeamId);
   if (L.source === "manual" && (!mine || !mine.players.length)) view.editing = true;
   const A = analyzeLeague(L);

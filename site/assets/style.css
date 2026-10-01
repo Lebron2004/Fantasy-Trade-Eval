@@ -203,3 +203,26 @@ footer{color:var(--muted);font-size:.85rem;margin-top:28px;max-width:72ch}
 @media (max-width:560px){.idea .deal{grid-template-columns:1fr}.idea .deal .arrow{padding:0;transform:rotate(90deg);justify-self:start}}
 .upside .lbl,.upside small{white-space:nowrap}
 @media (max-width:560px){.upside input{width:100px}}
+
+/* matchups, AI */
+.mu{display:inline-block;margin-left:6px;padding:0 7px;border-radius:6px;font-size:.74rem;font-weight:600;vertical-align:1px;background:var(--paper);color:var(--muted);white-space:nowrap}
+.mu-great{background:var(--get);color:#fff} .mu-good{background:var(--get-soft);color:var(--get)}
+.mu-tough{background:var(--send-soft);color:var(--send)} .mu-brutal{background:var(--send);color:#fff}
+.mu-bye{background:var(--ink);color:var(--paper)}
+.insight{color:var(--muted);font-size:.8rem}
+.ai-setup{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1.3fr) auto;gap:12px;align-items:end}
+.ai-setup input,.ai-setup select{border:1px solid var(--line);background:var(--paper);border-radius:10px;padding:8px 10px;font-size:1rem;color:var(--ink)}
+.ai-q{flex:1;min-width:0;border:1px solid var(--line);background:var(--paper);border-radius:12px;padding:10px 12px;font:inherit;color:var(--ink);resize:vertical}
+.ai-out{margin-top:14px;max-width:78ch}
+.ai-out p{margin:0 0 10px} .ai-out h4{font-family:var(--display);font-size:1.15rem;margin:14px 0 6px}
+.ai-out ul{margin:0 0 10px;padding-left:20px} .ai-out li{margin:3px 0}
+.ai-src{margin:0;padding-left:18px;font-size:.88rem} .ai-src a{color:var(--get)}
+.def-t td.f{font-weight:600;text-align:center;border-radius:6px}
+.def-t td.f.g2{background:var(--get);color:#fff} .def-t td.f.g1{background:var(--get-soft);color:var(--get)}
+.def-t td.f.b1{background:var(--send-soft);color:var(--send)} .def-t td.f.b2{background:var(--send);color:#fff}
+.def-t th,.def-t td{text-align:center} .def-t th:first-child,.def-t td:first-child{text-align:left}
+details.panel summary{cursor:pointer;font-family:var(--display);font-weight:700;font-size:1.6rem;list-style:none}
+details.panel summary::-webkit-details-marker{display:none}
+details.panel summary::after{content:" +";color:var(--muted)} details.panel[open] summary::after{content:" –"}
+.synced{list-style:none;padding:0;margin:10px 0 0;display:grid;gap:6px}
+@media (max-width:700px){.ai-setup{grid-template-columns:1fr}}
