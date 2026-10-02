@@ -233,8 +233,81 @@ function renderPicker(){
   host.append(wrap);
 }
 
+/* ---------- Best bets: the trained model's strongest picks and 3-leg parlays for the next slate ---------- */
+// scripts/best_bets.py writes data/props/best.json every morning, after the model is trained
+let best = null;
+const loadBest = () => best || (best = getJSON("data/props/best.json").catch(() => { best = null; return null; }));
+// color by how likely it is: green for strong, amber for a lean, red for a long shot
+const tier = (p, legs = 1) => { const q = Math.pow(p, 1 / legs); return q >= 0.64 ? "hi" : q >= 0.56 ? "mid" : "lo"; };
+const chancePill = (p, legs = 1) => el("span", {class:`chance ${tier(p, legs)}`, text:pct(p)});
+let bestDate = null;
+const slateName = b => !/^\d{4}-/.test(b.slate || "") ? (b.slate || "the next slate") : b.slate === bestDate ? "today"
+  : new Date(b.slate + "T12:00:00").toLocaleDateString(undefined, {weekday:"long", month:"short", day:"numeric"});
+function pickText(c, sp = sport){ return `${c.side === "over" ? "Over" : "Under"} ${c.line} ${withSport(sp, () => labelOf(c.key))}`; }
+function withSport(sp, fn){ const saved = sport; sport = sp; try { return fn(); } finally { sport = saved; } }
+function openPick(c){
+  ui.stat = c.key; ui.line = c.line; ui.side = c.side; ui.oddsO = ""; ui.oddsU = "";
+  openPlayer(c.pid, true).then(() => window.scrollTo({top: $("picker").offsetTop - 8, behavior:"smooth"}));
+}
+async function checkParlay(legs, sp){
+  slip = {open:true, legs: legs.map(c => ({sport: sp, pid: c.pid, name: c.name, team: c.team, key: c.key, line: c.line, side: c.side, sure: true})),
+          odds:null, stake:null, bonus:false, busy:"", idx: slip.idx};
+  renderSlip(); $("slip").scrollIntoView({behavior:"smooth", block:"start"});
+  await Promise.all(slip.legs.map(modelLeg)); renderSlip();
+}
+function bestPanel(b, sp){
+  const box = el("section", {class:"panel best"});
+  box.append(el("h2", {text:`Best bets for ${slateName(b)}`}));
+  if (!b.picks.length){ box.append(el("p", {class:"empty", style:"margin:0", text: b.note || "No picks for this slate yet."})); return box; }
+  box.append(el("p", {class:"sub", text:`The trained model's most likely props across ${b.games} game${b.games === 1 ? "" : "s"}, each at the line nearest his average over his last 10 games, since real sportsbook lines aren't in the free data. Your book's line may differ, so tap a pick to check it at that line. Rebuilt every morning with the latest results and injury tags; injured players are left out.`}));
+  const byId = new Map([...b.picks, ...(b.extra || [])].map(c => [c.pid + ":" + c.key, c]));
+  if (b.parlays.length){
+    box.append(el("h3", {text:"3-leg parlays"}));
+    const grid = el("div", {class:"parlays"});
+    b.parlays.forEach((pl, i) => {
+      const legs = pl.legs.map(k => byId.get(k)).filter(Boolean);
+      const card = el("div", {class:`parlay ${tier(pl.p, legs.length)}`},
+        el("div", {class:"parlay-top"}, el("strong", {text: i === 0 ? "Best parlay" : `Parlay ${i + 1}`}), chancePill(pl.p, legs.length)),
+        el("ul", {}, ...legs.map(c => el("li", {},
+          el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}),
+          el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:` ${c.home ? "vs" : "at"} ${c.opp}, ${pct(c.p)}`})))),
+        el("div", {class:"parlay-foot"}, el("small", {text:`Fair odds ${toAmerican(pl.p)}. One leg per game, so the legs don't lean on each other.`}),
+          el("button", {class:"btn tiny", text:"Check in slip", onclick: () => checkParlay(legs, sp)})));
+      grid.append(card);
+    });
+    box.append(grid);
+  } else if (b.note) box.append(el("p", {class:"sub", text:b.note}));
+  const pickList = list => {
+    const ul = el("ol", {class:"picks"});
+    list.forEach(c => {
+      const why = (c.why || []).map(w => w[0].toLowerCase()).join(" and ");
+      ul.append(el("li", {class:"pick"},
+        chancePill(c.p),
+        el("div", {}, el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}), el("span", {class:"tag", text:c.team}),
+          el("div", {class:"pick-line", text:pickText(c, sp)}),
+          el("small", {text:`${c.home ? "vs" : "at"} ${c.opp}, ${shortDate(c.date)}. Hit ${c.l10[0]} of his last ${c.l10[1]}.${why ? ` Helped most by ${why}.` : ""}`}))));
+    });
+    return ul;
+  };
+  box.append(el("h3", {text:"Most likely to hit"}), pickList(b.picks));
+  if ((b.overs || []).length){
+    box.append(el("h3", {text:"Best overs"}),
+      el("p", {class:"sub", text:"Players finish under their usual line more often than over, so most top picks are unders. These are the overs the model likes most."}),
+      pickList(b.overs));
+  }
+  return box;
+}
+async function renderBest(host, sp){
+  const data = await loadBest();
+  if (sp !== sport || player || !host.isConnected) return;
+  if (!data || !data.sports || !data.sports[sp]) return;
+  bestDate = data.date;
+  host.replaceWith(bestPanel(data.sports[sp], sp));
+}
+
 function renderLanding(){
   const app = $("app"); app.innerHTML = "";
+  const bestHost = el("div"); app.append(bestHost); renderBest(bestHost, sport);
   const box = el("section", {class:"panel"}, el("h2", {text:"Popular this week"}),
     el("p", {class:"sub", text:"The most productive players this season. Pick one, or search above for anyone."}));
   const grid = el("div", {class:"chips"});
@@ -1090,7 +1163,10 @@ function readHash(){
 }
 function renderSports(){
   const nav = $("sports"); if (!nav) return; nav.innerHTML = "";
-  SPORTS.forEach(([id, label]) => nav.append(el("button", {text:label, "data-sport":id, "aria-pressed": String(sport === id), onclick: () => { if (id !== sport) switchSport(id); }})));
+  SPORTS.forEach(([id, label]) => nav.append(el("button", {text:label, "data-sport":id, "aria-pressed": String(sport === id), onclick: () => {
+    if (id !== sport) switchSport(id);
+    else if (player && index){ player = null; history.replaceState(null, "", `#sp=${id}`); render(); }   // back to best bets
+  }})));
 }
 const teamFix = t => ({LAR:"LA", JAC:"JAX", WSH:"WAS"}[t] || t);   // Sleeper vs nflverse team codes
 async function switchSport(id, playerId){

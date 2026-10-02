@@ -403,3 +403,25 @@ td.ch{font-weight:600}
 .leg:has(.leg-p .ch-1){--chc-leg:var(--ch-1)} .leg:has(.leg-p .ch-2){--chc-leg:var(--ch-2)} .leg:has(.leg-p .ch-3){--chc-leg:var(--ch-3)}
 .leg:has(.leg-p .ch-4){--chc-leg:var(--ch-4)} .leg:has(.leg-p .ch-5){--chc-leg:var(--ch-5)}
 .ch-pill{display:inline-block;padding:1px 9px;border-radius:999px;font-weight:700;background:var(--chs);color:var(--chc)}
+
+/* best bets */
+/* tiers share the site-wide hit-chance colors */
+.best{--hi:var(--ch-5);--hi-soft:var(--ch-5-soft);--mid:var(--ch-3);--mid-soft:var(--ch-3-soft);--lo:var(--ch-1);--lo-soft:var(--ch-1-soft)}
+.chance{display:inline-block;min-width:3.4rem;text-align:center;font-family:var(--display);font-weight:800;font-size:1.35rem;line-height:1;padding:6px 8px;border-radius:10px}
+.chance.hi{background:var(--hi-soft);color:var(--hi)} .chance.mid{background:var(--mid-soft);color:var(--mid)} .chance.lo{background:var(--lo-soft);color:var(--lo)}
+.linkish{border:0;background:none;padding:0;font:inherit;font-weight:700;color:inherit;cursor:pointer;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:3px}
+.linkish:hover{text-decoration-color:currentColor}
+.parlays{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.parlays .parlay{border:1px solid var(--line);border-left:5px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.parlays .parlay.hi{border-left-color:var(--hi)} .parlays .parlay.mid{border-left-color:var(--mid)} .parlays .parlay.lo{border-left-color:var(--lo)}
+.parlay-top{display:flex;justify-content:space-between;align-items:center;font-family:var(--display);font-size:1.15rem}
+.parlays .parlay ul{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:.94rem}
+.parlays .parlay li small,.parlay-foot small{color:var(--muted)}
+.parlay-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:auto}
+.parlay-foot .btn{white-space:nowrap;flex:none}
+.picks{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px}
+.pick{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:start;border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.pick .tag{font-family:var(--display);font-weight:700;font-size:.78rem;padding:1px 7px;border-radius:6px;background:var(--paper);color:var(--muted);margin-left:6px}
+.pick-line{font-weight:600}
+.pick small{display:block;color:var(--muted);font-size:.84rem}
+@media (max-width:560px){.parlays,.picks{grid-template-columns:1fr}}
