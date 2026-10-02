@@ -47,6 +47,10 @@ jobs:
           pip install --quiet lightgbm
           python scripts/train_props_model.py
 
+      - name: Turn the model's predictions into buy and sell signals for trades
+        continue-on-error: true
+        run: python scripts/trade_signals.py
+
       - name: Sync ESPN and Yahoo leagues
         continue-on-error: true
         run: python scripts/sync_leagues.py
@@ -56,6 +60,10 @@ jobs:
           YAHOO_CLIENT_ID: ${{ secrets.YAHOO_CLIENT_ID }}
           YAHOO_CLIENT_SECRET: ${{ secrets.YAHOO_CLIENT_SECRET }}
           YAHOO_REFRESH_TOKEN: ${{ secrets.YAHOO_REFRESH_TOKEN }}
+
+      - name: Pull player news (injury changes, team changes, ESPN notes)
+        continue-on-error: true
+        run: python scripts/update_news.py
 
       - name: Commit refreshed data
         run: |

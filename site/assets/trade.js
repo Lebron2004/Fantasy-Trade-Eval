@@ -44,14 +44,17 @@ function renderSide(side){
   items.forEach((p, i) => {
     const n = el("div", {class:"name", text:p.name}); const tg = injTag(p); if (tg) n.append(tg);
     const mt = TS.matchupTag(p); if (mt) n.append(mt);
+    const st = TS.signalTag(p, sport); if (st) n.append(st);
     let m = metaText(p);
     if (p.gone) m += ", no longer on a roster";
     const adj = Math.round(adjusted(p, sport));
     if (p.edited) m += ", your value";
     const split = splitText(p);
     const ins = TS.insightText(p);
+    const sig = TS.signalText(p, sport), nw = TS.newsFor(sport, p.id)[0];
     const info = el("div", {}, n, el("div", {class:"meta", text:m}), split ? el("div", {class:"split", text:split}) : null,
-      ins ? el("div", {class:"insight", text:ins}) : null);
+      ins ? el("div", {class:"insight", text:ins}) : null, sig ? el("div", {class:"insight", text:sig}) : null,
+      nw ? el("div", {class:"insight news-mini", text:`${TS.newsWhen(nw)}: ${TS.newsLine(nw)}`}) : null);
     const v = el("input", {class:"val", type:"number", min:0, max:150, value:adj, "aria-label":`Value for ${p.name}`});
     v.onchange = () => { p.value = Math.max(0, Math.min(150, Number(v.value) || 0)); p.edited = true; persist(); renderSide(side); renderScale(); };
     const x = el("button", {class:"x", text:"×", "aria-label":`Remove ${p.name}`, onclick: () => { items.splice(i,1); persist(); renderSide(side); renderScale(); }});
@@ -76,6 +79,16 @@ function renderScale(){
     if (Math.abs(diff) < 0.07){ verdict.textContent = "Fair trade"; verdict.classList.add("fair"); detail.textContent = `Both sides are within ${Math.max(pct,1)}% of each other.`; }
     else if (diff > 0){ verdict.textContent = "You come out ahead"; verdict.classList.add("win"); detail.textContent = `You get about ${pct}% more value than you give.`; }
     else { verdict.textContent = "You're overpaying"; verdict.classList.add("lose"); detail.textContent = `You give up about ${pct}% more value than you get.`; }
+    // the trained prop model's lean: does it like the players you get more than their trade value does?
+    const lean = list => { const g = list.map(p => TS.signalOf(p, sport)).filter(Boolean); return g.length ? g.reduce((a, x) => a + x.s, 0) / g.length : null; };
+    const lg = lean(t.get), ls = lean(t.send);
+    if (lg != null || ls != null){
+      const edge = (lg || 0) - (ls || 0);
+      if (edge >= 0.3) detail.textContent += " The trained model leans your way: it rates the players you get above their trade value.";
+      else if (edge <= -0.3) detail.textContent += " The trained model leans the other way: it rates the players you send above their trade value.";
+    }
+    const hurt = t.get.filter(p => TS.HURT.has(p.inj));
+    if (hurt.length) detail.textContent += ` Heads up: ${hurt.map(p => `${p.name} is ${p.inj === "IR" ? "on IR" : p.inj.toLowerCase()}`).join(", ")}.`;
     const spots = t.get.length - t.send.length;
     if (spots > 0) detail.textContent += ` You'll need ${spots} open roster spot${spots>1?"s":""}.`;
     if (spots < 0) detail.textContent += ` You free up ${-spots} roster spot${spots<-1?"s":""}.`;
@@ -95,6 +108,24 @@ function renderMoves(){
     el("span", {class:"path"}, el("span", {text:(m.from || "FA") + " to "}), el("b", {text:m.to || "FA"})))));
   $("moreMoves").hidden = list.length <= movesShown;
 }
+function renderNews(){
+  $("newsH").textContent = `Latest ${TS.sportName(state.sport).toLowerCase()} news`;
+  const ul = $("news"); ul.innerHTML = "";
+  const cut = new Date(Date.now() - 4 * 864e5).toISOString();
+  // the most valuable players first, so the news that moves trades is on top
+  const list = TS.allNews(state.sport).filter(i => i.d >= cut && i.kind !== "team").sort((a, b) => (b.v || 0) - (a.v || 0) || b.d.localeCompare(a.d));
+  const seen = new Set(), shown = [];
+  for (const i of list){ if (seen.has(i.id)) continue; seen.add(i.id); shown.push(i); if (shown.length === 12) break; }
+  $("newsEmpty").hidden = shown.length > 0;
+  shown.forEach(i => {
+    const p = (TS.pools[state.sport] || {byId:new Map()}).byId.get(i.id);
+    const lvl = p && TS.HURT.has(p.inj) ? "bad" : p && p.inj ? "warn" : i.kind === "injury" && !i.to ? "good" : "";
+    ul.append(el("li", {class:lvl}, el("div", {class:"body"},
+      el("div", {class:"nm"}, el("b", {text:i.name}), p ? injTag(p) || "" : "", p ? TS.signalTag(p, state.sport) || "" : "", el("small", {text:` ${i.team || ""}`})),
+      el("p", {class:"line"}, el("span", {class:"when", text:TS.newsWhen(i) + " "}), TS.newsLine(i),
+        i.url ? el("a", {href:i.url, target:"_blank", rel:"noopener", text:" Read"}) : ""))));
+  });
+}
 function renderSaved(){
   const ul = $("saved"); ul.innerHTML = "";
   $("savedEmpty").hidden = saved.length > 0;
@@ -113,7 +144,7 @@ function renderSaved(){
 const searches = [];
 function renderAll(){
   renderSports(); TS.settingsBar($("settings"), state.sport, renderAll); renderStatus();
-  renderSide("send"); renderSide("get"); renderScale(); renderMoves(); searches.forEach(s => s.refreshPlaceholder());
+  renderSide("send"); renderSide("get"); renderScale(); renderNews(); renderMoves(); searches.forEach(s => s.refreshPlaceholder());
 }
 async function switchSport(id){
   state.sport = id; movesShown = 20; persist(); renderAll();

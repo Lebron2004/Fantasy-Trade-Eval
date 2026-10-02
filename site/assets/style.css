@@ -351,3 +351,19 @@ details.panel summary::after{content:" +";color:var(--muted)} details.panel[open
 .plegs small{color:var(--muted)}
 .btn.tiny{padding:2px 8px;font-size:.8rem;border-radius:8px}
 @media (max-width:760px){.slip-in{grid-template-columns:1fr}.leg{grid-template-columns:1fr auto}.leg-ctl{grid-column:1 / -1}.leg-p{grid-column:1;text-align:left}.plegs li{grid-template-columns:1.2rem 1fr}.plegs small{grid-column:2}}
+
+/* trained-model signals and player news */
+.sig-buy{background:var(--get-soft);color:var(--get)} .sig-sell{background:var(--send-soft);color:var(--send)}
+.mu.sig{font-weight:700}
+.lu.bs .slot{border-radius:8px;text-align:center;font-weight:700}
+.lu.bs .slot.sig-buy{color:var(--get)} .lu.bs .slot.sig-sell{color:var(--send)}
+.news{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.news li{border:1px solid var(--line);border-left:5px solid var(--line);border-radius:12px;padding:10px 12px}
+.news li.bad{border-left-color:var(--send)} .news li.warn{border-left-color:var(--gold)} .news li.good{border-left-color:var(--get)}
+.news .nm small{color:var(--muted)}
+.news .line{margin:4px 0 0;font-size:.93rem}
+.news .when{color:var(--muted);font-size:.85rem}
+.news a{color:var(--get);font-weight:600;text-decoration:none}
+.news .todo{margin:6px 0 0;font-size:.93rem;font-weight:600}
+.news li.bad .todo{color:var(--send)} .news li.good .todo{color:var(--get)}
+.news-mini{font-style:italic}
