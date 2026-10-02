@@ -51,6 +51,10 @@ jobs:
         continue-on-error: true
         run: python scripts/trade_signals.py
 
+      - name: Pick the day's best bets and parlays
+        continue-on-error: true
+        run: python scripts/best_bets.py
+
       - name: Sync ESPN and Yahoo leagues
         continue-on-error: true
         run: python scripts/sync_leagues.py
