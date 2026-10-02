@@ -16,18 +16,21 @@
     <div class="brand">
       <nav class="pagenav" aria-label="Pages"><a href="index.html">Trade calculator</a><a href="league.html">My league</a><a href="props.html" aria-current="page">Props</a></nav>
       <h1>Props</h1>
-      <p>Hit rates, matchups, and a projection for any player prop. Football for now.</p>
+      <p>Hit rates, matchups, and a projection for any player prop.</p>
     </div>
+    <nav class="sports" aria-label="Sport" id="sports"></nav>
   </header>
-  <div id="picker" style="margin-bottom:12px"></div>
+  <section class="panel tracker" id="tracker" hidden aria-live="polite"></section>
+  <div id="picker" style="margin:16px 0 12px"></div>
   <p class="status" id="status" aria-live="polite">Loading...</p>
   <div id="app"></div>
   <footer>
-    Stats, play-by-play, betting lines, and charting data from nflverse (CC-BY 4.0), with charting by FTN Data (ftndata.com via nflverse). Everything here is historical data and a statistical estimate, not a guarantee. Past results don't promise future ones, and the projection can't see injuries, weather changes, or news after the morning update.
+    Football data from nflverse (CC-BY 4.0), with charting by FTN Data (ftndata.com via nflverse). Basketball and hockey box scores from the SportsDataverse project. Baseball game logs from the MLB Stats API. Live scores from ESPN. Everything here is historical data and a statistical estimate, not a guarantee. Past results don't promise future ones, and the projection can't see injuries, weather changes, or news after the morning update.
     <p class="gamble">Bet only what you can afford to lose. If gambling stops being fun, call or text 1-800-GAMBLER (US) for free, confidential help.</p>
   </footer>
 </div>
 <script src="assets/core.js"></script>
+<script src="assets/live.js"></script>
 <script src="assets/props.js"></script>
 </body>
 </html>
