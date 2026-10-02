@@ -40,6 +40,13 @@ jobs:
           python scripts/update_props.py || echo "NFL props failed"
           python scripts/update_props_more.py
 
+      - name: Train the prop model on past games
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          pip install --quiet lightgbm
+          python scripts/train_props_model.py
+
       - name: Sync ESPN and Yahoo leagues
         continue-on-error: true
         run: python scripts/sync_leagues.py

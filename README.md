@@ -37,6 +37,7 @@ From then on it runs by itself every day at 11:00 UTC. To change the time, edit 
 - **Live tracking**: hit **Track this prop** to pin a bet. While the game is on, the Tracked props panel updates every 30 seconds with his current stat vs. the line, the live chance next to the pre-game chance, and a small chart of how it has moved. It marks Won or Lost when the bet is settled, with optional browser alerts. Opening any player whose game is live also shows a live card for the prop you're viewing. Live scores come straight from ESPN's public scoreboard in the visitor's browser (no server or key), polling only while a game is on and the tab is visible.
 - **Check a bet slip**: upload a screenshot from DraftKings, FanDuel, or any book, or paste the legs. The page reads the slip in your browser (Tesseract.js OCR, loaded from jsDelivr the first time; the image never leaves your device), finds each player across all four sports, and works out the market, line, and over/under, including alt lines like "25+ Points" and yes-markets like "Anytime TD Scorer." Each leg gets its model chance, and the parlay gets the combined chance next to the book's implied odds, the edge, and the weakest leg. Same-game legs are flagged, since they're correlated. Team bets (spreads, totals, moneylines) can't be modeled, so you enter your own chance for those. One click tracks the whole parlay live.
 - **A projection and model chance** built in four visible steps (recent form, opponent defense, scheme fit, game script). Enter the sportsbook's odds to see the implied chance, the no-vig chance, and the edge.
+- **A trained model chance.** Every morning a LightGBM model per sport is trained on every past game in the props data (three seasons of game logs) and learns how much recent form, the line vs his history, the opponent, home/away, rest, role and minutes, and (football) the spread and total actually move the chance of clearing a line, instead of using hand-picked weights. Every input for a game uses only games before it. The page shows the trained chance as the headline number with the formula's chance next to it, and lists which factors pushed this prop up or down. Each sport's model is scored on its most recent 20% of games, which it never trains on, against the formula. It ships only if it beats the formula there; otherwise the page keeps the formula. The test results are in `data/props/<sport>/model.json`. The tested lines are the page's default lines (the median of his last 10 games), not real sportsbook lines, which aren't in the free data.
 
 Props data comes from [nflverse](https://github.com/nflverse) (CC-BY 4.0) with charting from FTN Data for football, [SportsDataverse](https://github.com/sportsdataverse) for basketball and hockey, and the MLB Stats API for baseball. Props data is rebuilt on every run and deployed with the site, but not stored in git, so the repo stays small. The one exception is `site/data/props/mlb/_cache.json`, which caches last season's baseball game logs. Man/zone coverage is published only after each season, so coverage splits use past seasons. True receiver-vs-cornerback matchups need paid tracking data and aren't included.
 
@@ -120,7 +121,7 @@ python scripts/update_players.py nfl    # just one
 cd site && python -m http.server 8000   # then open http://localhost:8000
 ```
 
-`update_players.py` uses only the standard library. The props scripts need `pip install pandas pyarrow`. Run `update_players.py` first, since the props builders read its roster files for current teams and full names. Open the page through the local server rather than by double-clicking `index.html`, because browsers block loading the data files from `file://`.
+`update_players.py` uses only the standard library. The props scripts need `pip install pandas pyarrow`, and `python scripts/train_props_model.py` (run after them) also needs `pip install lightgbm`. Run `update_players.py` first, since the props builders read its roster files for current teams and full names. Open the page through the local server rather than by double-clicking `index.html`, because browsers block loading the data files from `file://`.
 
 ## Tuning
 
@@ -137,6 +138,7 @@ cd site && python -m http.server 8000   # then open http://localhost:8000
 scripts/update_players.py      pulls players, values, team changes
 scripts/update_props.py        builds NFL props data from nflverse (needs pandas + pyarrow)
 scripts/update_props_more.py   builds NBA, NHL, and MLB props data (needs pandas + pyarrow)
+scripts/train_props_model.py   trains the prop model on past games and writes next-game chances (needs lightgbm)
 site/index.html                trade calculator
 site/league.html               league analysis
 site/props.html                player props
