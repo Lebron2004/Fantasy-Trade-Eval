@@ -56,7 +56,7 @@ const isCount = key => key.split("+").every(k => C().count.includes(k)) || key =
 const components = key => key === "td" ? ["rutd","retd"] : key.split("+");
 
 /* ---------- State ---------- */
-let index = null, defense = null, player = null, injuries = null;
+let index = null, defense = null, player = null, injuries = null, model = null;
 let ui = {stat:null, line:null, side:"over", range:"10", mate:"", oddsO:"", oddsU:""};
 
 /* ---------- Math ---------- */
@@ -82,6 +82,30 @@ function probOver(mu, sd, line, count, disp = 1){
   const hi = Math.floor(line) + 0.5, lo = Math.ceil(line) - 0.5;    // continuity correction for whole-number stats
   const over = 1 - Phi((hi - mu) / sd), under = Phi((lo - mu) / sd);
   return {over, under, push: Math.max(0, 1 - over - under)};
+}
+/* ---------- Trained model ---------- */
+// scripts/train_props_model.py writes, into each player's file, the trained model's chance of the Over for his next
+// game at a grid of half-point lines ("ml"). It's used wherever the line falls inside that grid; otherwise the formula.
+const FLOAT_STATS = {nfl:["ppr"], nba:["min"], nhl:["toi"], mlb:[]};
+function mlChance(doc, key, line, sp = sport){
+  const m = doc && doc.ml && doc.ml[key]; if (!m || !m.l || !m.l.length) return null;
+  const L = m.l, P = m.p;
+  const at = x => {
+    if (x < L[0] - 1e-6 || x > L[L.length - 1] + 1e-6) return null;
+    let i = 0; while (i < L.length - 2 && L[i + 1] < x) i++;
+    if (L.length === 1 || x <= L[i]) return P[i];
+    const t = Math.min(1, (x - L[i]) / (L[i + 1] - L[i])); return P[i] + t * (P[i + 1] - P[i]);
+  };
+  const whole = !components(key).some(c => (FLOAT_STATS[sp] || []).includes(c));
+  if (whole && Number.isInteger(line)){ const o = at(line + 0.5), u = at(line - 0.5); if (o == null || u == null) return null; return {over:o, under:1 - u, push:Math.max(0, u - o)}; }
+  const o = at(whole ? Math.floor(line) + 0.5 : line); if (o == null) return null;
+  return {over:o, under:1 - o, push:0};
+}
+// the chance used everywhere: trained model when it covers this line, formula otherwise
+function sideChance(doc, key, line, side, pr, sp = sport){
+  const ml = mlChance(doc, key, line, sp), P = pr ? probOver(pr.mu, pr.sd, line, pr.count, pr.disp) : null;
+  const pick = x => x ? (side === "over" ? x.over : x.under) : null;
+  return {p: ml ? pick(ml) : pick(P), trained: !!ml, formula: pick(P), push: (ml || P || {push:0}).push};
 }
 const implied = o => { const n = Number(o); if (!n || Math.abs(n) < 100) return null; return n < 0 ? -n / (-n + 100) : 100 / (n + 100); };
 const toAmerican = p => p <= 0 || p >= 1 ? "–" : p >= 0.5 ? String(Math.round(-100 * p / (1 - p))) : "+" + Math.round(100 * (1 - p) / p);
@@ -301,19 +325,20 @@ function render(){
   const pr = project(key);
   const verdict = el("div", {class:"verdict-row"});
   if (pr){
-    const P = probOver(pr.mu, pr.sd, line, pr.count, pr.disp);
-    const pSide = side === "over" ? P.over : P.under;
+    const ch = sideChance(player, key, line, side, pr), P = {push: ch.push};
+    const pSide = ch.p;
     const ipO = implied(ui.oddsO), ipU = implied(ui.oddsU);
     let book = null, bookTxt = "";
     if (ipO && ipU){ const fair = (side === "over" ? ipO : ipU) / (ipO + ipU); book = fair; bookTxt = `Book's fair chance (vig removed): ${pct(fair)}`; }
     else if (side === "over" && ipO){ book = ipO; bookTxt = `Book implies ${pct(ipO)}`; }
     else if (side === "under" && ipU){ book = ipU; bookTxt = `Book implies ${pct(ipU)}`; }
     const big = el("div", {class:"big"}, el("span", {class:"num", text:pct(pSide)}),
-      el("span", {class:"cap", text:`model chance of ${side === "over" ? "Over" : "Under"} ${line} ${labelOf(key)}`}));
+      el("span", {class:"cap", text:`${ch.trained ? "trained model" : "model"} chance of ${side === "over" ? "Over" : "Under"} ${line} ${labelOf(key)}`}));
     verdict.append(big);
     const facts = el("div", {class:"facts"},
       el("div", {}, el("span", {class:"lbl", text:"Projection"}), el("strong", {text: pr.count ? fmt1(pr.mu) : String(Math.round(pr.mu))}), el("small", {text: pr.count ? " expected" : ` ± ${Math.round(pr.sd)}`})),
       el("div", {}, el("span", {class:"lbl", text:"Fair odds"}), el("strong", {text:toAmerican(pSide)})));
+    if (ch.trained) facts.append(el("div", {}, el("span", {class:"lbl", text:"Formula"}), el("strong", {text:pct(ch.formula)}), el("small", {text:" hand-tuned weights"})));
     if (book != null){
       const edge = pSide - book;
       facts.append(el("div", {}, el("span", {class:"lbl", text:"Edge"}),
@@ -415,10 +440,37 @@ function whyPanel(pr, key, ng, opp){
     el("div", {}, el("strong", {text:t}), el("small", {text:d})),
     f == null ? el("span", {class:"chip", text:"base"}) : el("span", {class:`chip ${f > 1.005 ? "up" : f < 0.995 ? "down" : ""}`, text:signPct(f)}),
     el("span", {class:"v", text: pr.count ? fmt1(v) : String(Math.round(v))}))));
+  const mlSec = trainedPanel(key);
   panel.append(ul, el("p", {class:"why", style:"margin-top:10px", text: pr.count
     ? `This stat is modeled as a count. His games swing ${pr.disp > 1.15 ? "more than a steady rate would explain, so the odds are spread wider to match" : "about as much as a steady rate would, so it's priced like one"}.`
     : `This stat uses a bell curve centered on the projection, with a spread of about ${fmt1(pr.sd)} based on how much his games actually swing.`}));
+  if (mlSec) panel.append(...mlSec);
   return panel;
+}
+// what the trained model leaned on for this prop, and how it did on games it never saw
+function trainedPanel(key){
+  const m = player.ml && player.ml[key]; if (!m || !model || !model.used) return null;
+  const out = [el("h3", {text:"What the trained model weighed", style:"margin:18px 0 4px"})];
+  const i = m.l.indexOf(m.at), p0 = i >= 0 ? m.p[i] : null;
+  if (m.c && m.c.length && p0 != null){
+    out.push(el("p", {class:"why", text:`For Over ${m.at}, the model's ${pct(p0)} came from these factors (pushes up or down from a typical prop):`}));
+    const ul = el("ul", {class:"why-list"});
+    m.c.slice(0, 5).forEach(([g, c]) => {
+      const d = Math.round(c * p0 * (1 - p0) * 100);   // log-odds contribution as rough percentage points
+      ul.append(el("li", {}, el("div", {}, el("strong", {text:g})),
+        el("span", {class:`chip ${d > 0 ? "up" : d < 0 ? "down" : ""}`, text:(d > 0 ? "+" : "") + d + " pts"}), el("span", {class:"v", text:""})));
+    });
+    out.push(ul);
+  }
+  const r = model.report && model.report.default_lines;
+  if (r){
+    const top = (model.importance || []).slice(0, 3).map(x => x[0].toLowerCase()).join(", ");
+    out.push(el("p", {class:"why", style:"margin-top:10px", text:
+      `Trained with LightGBM on ${(model.player_games || model.games).toLocaleString()} past player games, so the weights come from real results instead of being picked by hand. ` +
+      `Tested on ${r.n.toLocaleString()} later props it never saw: average error ${r.trained.brier.toFixed(3)} vs ${r.formula.brier.toFixed(3)} for the formula (Brier score, lower is better). ` +
+      (top ? `Across all props it leans most on ${top}.` : "")}));
+  }
+  return out;
 }
 function schemeNote(pr){
   const notes = pr.parts.flatMap(p => p.notes);
@@ -547,11 +599,11 @@ const sportLabel = sp => (SPORTS.find(s => s[0] === sp) || [, sp])[1];
 function trackCurrent(){
   const key = ui.stat, line = Number(ui.line), pr = project(key);
   if (!pr){ toast("Not enough games to model this player yet."); return; }
-  const P = probOver(pr.mu, pr.sd, line, pr.count, pr.disp);
+  const ch = sideChance(player, key, line, ui.side, pr);
   const ng = nextGame();
   const bet = {id: Date.now().toString(36), sport, pid: player.id, name: player.name, team: player.team, grp: grpOf(player),
     key, label: labelOf(key), line, side: ui.side, mu: pr.mu, sd: pr.sd, count: pr.count, disp: pr.disp,
-    pre: ui.side === "over" ? P.over : P.under, start: ng ? (ng.time && ng.time.includes("T") ? ng.time : ng.date) : null,
+    pre: ch.p, start: ng ? (ng.time && ng.time.includes("T") ? ng.time : ng.date) : null,
     opp: ng ? ng.opp : "", added: new Date().toISOString(), hist: []};
   if (sport === "mlb" && grpOf(player) === "SP"){ const po = project("outs"); bet.outsMu = po ? po.mu : 17; }
   if (tracked.some(b => b.sport === bet.sport && b.pid === bet.pid && b.key === bet.key && b.line === bet.line && b.side === bet.side && !b.result)){
@@ -807,8 +859,7 @@ async function modelLeg(leg){
       if (leg.line == null) leg.line = defaultLine(leg.key);
       const pr = project(leg.key);
       if (!pr){ leg.p = null; leg.note = "Not enough games to model"; return; }
-      const P = probOver(pr.mu, pr.sd, leg.line, pr.count, pr.disp);
-      leg.p = leg.side === "over" ? P.over : P.under;
+      leg.p = sideChance(doc, leg.key, leg.line, leg.side, pr, leg.sport).p;
       leg.label = labelOf(leg.key);
       Object.assign(leg, {mu: pr.mu, sd: pr.sd, count: pr.count, disp: pr.disp, pre: leg.p, team: doc.team, name: doc.name});
       if (leg.sport === "mlb" && leg.grp === "SP"){ const po = project("outs"); leg.outsMu = po ? po.mu : 17; }
@@ -1043,7 +1094,7 @@ function renderSports(){
 }
 const teamFix = t => ({LAR:"LA", JAC:"JAX", WSH:"WAS"}[t] || t);   // Sleeper vs nflverse team codes
 async function switchSport(id, playerId){
-  sport = id; player = null; index = null; defense = null; injuries = null;
+  sport = id; player = null; index = null; defense = null; injuries = null; model = null;
   ui = Object.assign(ui, {stat:null, line:null, range:"10", mate:"", oddsO:"", oddsU:""});
   store.set("tradescale:props-sport", id);
   renderSports(); $("picker").innerHTML = ""; $("app").innerHTML = "";
@@ -1057,6 +1108,8 @@ async function switchSport(id, playerId){
     return;
   }
   if (id !== sport) return;   // user switched again while loading
+  model = null;
+  getJSON(BASE() + "model.json").then(m => { if (id === sport){ model = m; if (player) render(); } }).catch(() => {});
   const live = index.players.filter(p => p[5] > 0).length;
   status.textContent = `${index.players.length} players, ${seasonName(index.season)} season${live ? "" : " (last season's games until the new one starts)"}, updated ${TS.ago(index.updated)}.`;
   renderPicker();
