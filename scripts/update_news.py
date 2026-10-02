@@ -26,9 +26,9 @@ DATA = os.path.join(ROOT, "site", "data")
 UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"}
 ESPN = {"nfl": "football/nfl", "nba": "basketball/nba", "nhl": "hockey/nhl", "mlb": "baseball/mlb"}
 KEEP_DAYS = 10
-MAX_ITEMS = 600
+MAX_ITEMS = 1200
 # ESPN's injury statuses, in the words the pages already use.
-ESPN_STATUS = {"out": "Out", "injured reserve": "IR", "day-to-day": "DTD", "questionable": "Questionable", "doubtful": "Doubtful",
+ESPN_STATUS = {"active": "", "out": "Out", "injured reserve": "IR", "day-to-day": "DTD", "questionable": "Questionable", "doubtful": "Doubtful",
                "suspension": "Sus", "suspended": "Sus", "10-day-il": "IL10", "15-day-il": "IL15", "60-day-il": "IL60", "7-day-il": "IL7"}
 
 
@@ -120,7 +120,8 @@ def espn_injuries(sport, pool):
             if not r:
                 continue
             st = ESPN_STATUS.get(str(inj.get("status") or "").lower(), inj.get("status") or "")
-            status[str(r[0])] = st
+            if st:   # ESPN lists healthy players with a fresh note as "Active"; that's news, not a designation
+                status[str(r[0])] = st
             text = clean(inj.get("shortComment") or inj.get("longComment") or "")
             when = iso(inj.get("date"))
             if text and when:
@@ -135,15 +136,16 @@ def espn_headlines(sport, pool):
         when = iso(art.get("published") or art.get("lastModified"))
         head = clean(art.get("headline"), 200)
         url = ((art.get("links") or {}).get("web") or {}).get("href")
-        if not when or not head:
-            continue
+        if not when or not head or art.get("type") == "Media" or "/video/" in (url or ""):
+            continue   # highlight clips tag every star in the game; they aren't news about him
         seen = set()
         for c in art.get("categories") or []:
             if c.get("type") != "athlete":
                 continue
             name = c.get("description") or ((c.get("athlete") or {}).get("description"))
             r = pool.match(name, c.get("athleteId") or (c.get("athlete") or {}).get("id"))
-            if not r or str(r[0]) in seen:
+            # league-wide stories tag lots of players; keep it only when the headline is about him
+            if not r or str(r[0]) in seen or norm(r[1]).split(" ")[-1] not in norm(head):
                 continue
             seen.add(str(r[0]))
             items.append({"d": when, "sport": sport, "id": str(r[0]), "name": r[1], "team": r[2], "kind": "headline",
