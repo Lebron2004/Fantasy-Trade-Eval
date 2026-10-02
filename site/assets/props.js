@@ -577,7 +577,35 @@ function spark(hist){
   const pl = document.createElementNS(ns, "polyline"); pl.setAttribute("points", pts); pl.setAttribute("class", "spark-line");
   svg.append(mid, pl); return svg;
 }
+function parlayRow(b){
+  const live = b.live && b.live.state === "live", ch = b.lc ? b.lc.chance : b.pre;
+  const won = b.legs.filter(l => (l.unsupported ? l.manual : l.result) === "won").length;
+  const legsUl = el("ul", {class:"plegs"});
+  b.legs.forEach(l => {
+    const r = l.unsupported ? l.manual : l.result;
+    const icon = r === "won" ? "✓" : r === "lost" ? "✕" : l.live && l.live.state === "live" ? "●" : "○";
+    const now = l.unsupported ? `${pct(l.p)} (your estimate)` : l.lc && !r ? `${fmt1(l.lc.cur)} of ${l.line}, ${pct(l.lc.chance)}` : l.lc ? `${fmt1(l.lc.cur)}` : `${pct(l.pre)} pre-game`;
+    const li = el("li", {class: r ? "r-" + r : ""}, el("span", {class:"ic", text:icon}),
+      el("span", {class:"pl-txt", text: l.unsupported ? l.text : `${l.name} ${l.side} ${l.line} ${l.label}`}), el("small", {text:now}));
+    if (l.unsupported && !b.result) li.append(el("span", {class:"bar-row"},
+      el("button", {class:"btn tiny", text:"Hit", onclick: () => { l.manual = "won"; updateParlay(b).then(() => { saveTracked(); renderTracker(); }); }}),
+      el("button", {class:"btn tiny", text:"Miss", onclick: () => { l.manual = "lost"; updateParlay(b).then(() => { saveTracked(); renderTracker(); }); }})));
+    legsUl.append(li);
+  });
+  const payout = b.stake && b.odds ? b.stake * (b.odds > 0 ? 1 + b.odds / 100 : 1 + 100 / -b.odds) : null;
+  return el("li", {class:`trk parlay ${b.result ? "res-" + b.result : live ? "is-live" : ""}`},
+    el("div", {class:"trk-main"},
+      el("div", {class:"trk-name"}, el("strong", {text:`${b.legs.length}-leg parlay`}), b.odds != null ? el("span", {class:"tag", text:(b.odds > 0 ? "+" : "") + b.odds}) : null,
+        payout ? el("span", {class:"split", text:`$${b.stake} to pay $${payout.toFixed(2)}`}) : null),
+      el("div", {class:"trk-status"}, live && !b.result ? el("span", {class:"dot"}) : null,
+        b.result ? (b.result === "won" ? "Won" : "Lost") : `${won} of ${b.legs.length} legs in${live ? ", games live" : b.start ? ", first game " + startText(b) : ""}`),
+      legsUl),
+    el("div", {class:"trk-num"}, el("span", {class:"num", text: b.result ? (b.result === "won" ? "✓" : "✕") : pct(ch)}),
+      el("small", {text: b.result ? `pre-game ${pct(b.pre)}` : `was ${pct(b.pre)} pre-game`}), spark(b.hist)),
+    el("button", {class:"x", text:"×", "aria-label":"Stop tracking this parlay", onclick: () => { tracked = tracked.filter(t => t.id !== b.id); saveTracked(); renderTracker(); }}));
+}
 function liveRow(b){
+  if (b.type === "parlay") return parlayRow(b);
   const L = b.live || {}, ch = b.lc;
   const status = b.result ? (b.result === "won" ? "Won" : b.result === "lost" ? "Lost" : "Push")
     : L.state === "live" ? `Live, ${L.detail || ""}` : L.state === "final" ? "Final" : startText(b);
@@ -615,6 +643,24 @@ function renderTracker(){
   const ul = el("ul", {class:"trk-list"});
   tracked.forEach(b => ul.append(liveRow(b)));
   host.append(ul);
+}
+async function updateParlay(b){
+  if (b.result) return;
+  await Promise.all(b.legs.filter(l => !l.unsupported).map(updateBet));
+  const ps = b.legs.map(l => l.unsupported ? (l.manual === "won" ? 1 : l.manual === "lost" ? 0 : l.p)
+    : l.result === "won" ? 1 : l.result === "lost" ? 0 : l.lc ? l.lc.chance : l.pre);
+  const chance = ps.reduce((a, v) => a * v, 1);
+  const lost = b.legs.some(l => (l.unsupported ? l.manual : l.result) === "lost");
+  const allWon = b.legs.every(l => (l.unsupported ? l.manual : l.result) === "won");
+  const was = b.result;
+  b.lc = {chance}; b.result = lost ? "lost" : allWon ? "won" : null;
+  const anyLive = b.legs.some(l => l.live && l.live.state === "live");
+  if (anyLive || !b.hist.length || b.hist[b.hist.length - 1][1] !== chance){ b.hist.push([Date.now(), chance]); if (b.hist.length > 150) b.hist.splice(0, b.hist.length - 150); }
+  b.live = {state: anyLive ? "live" : b.legs.every(l => l.unsupported || (l.live && l.live.state === "final")) ? "final" : "pre"};
+  if (b.result && b.result !== was){
+    const msg = `Your ${b.legs.length}-leg parlay ${b.result === "won" ? "hit" : "missed"}${b.result === "won" && b.stake && b.odds ? `: $${(b.stake * (b.odds > 0 ? 1 + b.odds / 100 : 1 + 100 / -b.odds)).toFixed(2)}` : ""}.`;
+    toast(msg); try { if ("Notification" in window && Notification.permission === "granted") new Notification("Trade Scale", {body: msg}); } catch(e){}
+  }
 }
 async function updateBet(b){
   if (b.result && b.live && b.live.state === "final") return;
@@ -672,15 +718,226 @@ async function refreshPlayerLive(){
 async function poll(){
   clearTimeout(liveTimer);
   if (document.hidden){ liveTimer = setTimeout(poll, 60000); return; }
-  await Promise.all(tracked.filter(b => !(b.result && b.live && b.live.state === "final")).map(updateBet));
+  await Promise.all(tracked.filter(b => b.type === "parlay" ? !b.result : !(b.result && b.live && b.live.state === "final")).map(b => b.type === "parlay" ? updateParlay(b) : updateBet(b)));
   saveTracked(); renderTracker();
   await refreshPlayerLive();
   const live = tracked.some(b => b.live && b.live.state === "live") || (liveHost && liveHost.querySelector(".is-live"));
   const soon = tracked.some(b => !b.result && b.start && new Date(b.start.length > 10 ? b.start : b.start + "T00:00:00") - Date.now() < 3 * 3600e3);
+  if (tracked.some(b => b.type === "parlay" && b.live && b.live.state === "live")) { liveTimer = setTimeout(poll, 30000); return; }
   liveTimer = setTimeout(poll, live ? 30000 : soon ? 120000 : 600000);
 }
 function pollSoon(ms){ clearTimeout(liveTimer); liveTimer = setTimeout(poll, ms); }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) pollSoon(0); });
+
+/* ---------- Bet slips: upload or paste, model every leg, track the parlay ---------- */
+const sportData = {}, playerDocs = {};
+async function loadSportData(sp){
+  if (!sportData[sp]) sportData[sp] = Promise.all([getJSON(`data/props/${sp}/index.json`), getJSON(`data/props/${sp}/defense.json`)])
+    .then(([i, d]) => ({index: i, defense: d})).catch(e => { delete sportData[sp]; throw e; });
+  return sportData[sp];
+}
+async function loadPlayerDoc(sp, pid){
+  const k = sp + ":" + pid;
+  if (!playerDocs[k]) playerDocs[k] = getJSON(`data/props/${sp}/p/${pid}.json`).catch(e => { delete playerDocs[k]; throw e; });
+  return playerDocs[k];
+}
+// run the projection for any player in any sport by briefly pointing the model at that player's data
+function withPlayer(ctx, fn){
+  const saved = [sport, index, defense, player];
+  sport = ctx.sport; index = ctx.index; defense = ctx.defense; player = ctx.player;
+  try { return fn(); } finally { [sport, index, defense, player] = saved; }
+}
+async function modelLeg(leg){
+  if (leg.unsupported) return leg;
+  try {
+    const [sd, doc] = await Promise.all([loadSportData(leg.sport), loadPlayerDoc(leg.sport, leg.pid)]);
+    const ctx = {sport: leg.sport, index: sd.index, defense: sd.defense, player: doc};
+    withPlayer(ctx, () => {
+      const props = CFG[leg.sport].props[grpOf(doc)] || Object.values(CFG[leg.sport].props)[0];
+      leg.grp = grpOf(doc); leg.props = props;
+      if (!leg.key || !props.some(p => p[0] === leg.key)) leg.key = leg.key && props.some(p => p[0] === leg.key) ? leg.key : null;
+      if (leg.key == null){ leg.p = null; return; }
+      if (leg.line == null) leg.line = defaultLine(leg.key);
+      const pr = project(leg.key);
+      if (!pr){ leg.p = null; leg.note = "Not enough games to model"; return; }
+      const P = probOver(pr.mu, pr.sd, leg.line, pr.count, pr.disp);
+      leg.p = leg.side === "over" ? P.over : P.under;
+      leg.label = labelOf(leg.key);
+      Object.assign(leg, {mu: pr.mu, sd: pr.sd, count: pr.count, disp: pr.disp, pre: leg.p, team: doc.team, name: doc.name});
+      if (leg.sport === "mlb" && leg.grp === "SP"){ const po = project("outs"); leg.outsMu = po ? po.mu : 17; }
+      const ng = nextGame();
+      leg.start = ng ? (ng.time && ng.time.includes("T") ? ng.time : ng.date) : null; leg.opp = ng ? ng.opp : ""; leg.gameKey = ng ? [doc.team, ng.opp].sort().join("-") + ng.date : null;
+    });
+  } catch(e){ leg.p = null; leg.note = "Couldn't load this player's data"; }
+  return leg;
+}
+
+let slip = {open: false, legs: [], odds: null, stake: null, busy: "", idx: null};
+async function slipIndex(){
+  if (slip.idx) return slip.idx;
+  const all = [];
+  await Promise.all(SPORTS.map(async ([sp]) => {
+    try { const d = await loadSportData(sp); d.index.players.forEach(r => all.push({sport: sp, pid: r[0], name: r[1], team: r[2], grp: sp === "nba" ? null : r[3]})); } catch(e){}
+  }));
+  slip.idx = SLIP.buildIndex(all);
+  return slip.idx;
+}
+async function readSlipText(text){
+  slip.busy = "Reading the slip..."; renderSlip();
+  const idx = await slipIndex();
+  const r = SLIP.parse(text, idx);
+  if (!r.legs.length){ slip.busy = ""; slip.msg = "Couldn't find any legs. Try pasting the text, or add legs below one at a time."; renderSlip(); return; }
+  slip.legs.push(...r.legs);
+  if (r.odds != null) slip.odds = r.odds;
+  if (r.stake != null) slip.stake = r.stake;
+  slip.busy = "Modeling each leg..."; renderSlip();
+  await Promise.all(slip.legs.map(modelLeg));
+  slip.busy = ""; slip.msg = ""; renderSlip();
+}
+
+// OCR in the browser with Tesseract.js (loaded only when someone uploads a screenshot)
+const OCR_SRC = window.TS_OCR_SRC || "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+function loadScript(src){ return new Promise((res, rej) => { const sc = document.createElement("script"); sc.src = src; sc.onload = res; sc.onerror = () => rej(new Error("load")); document.head.append(sc); }); }
+async function prepImage(file){
+  const img = await createImageBitmap(file);
+  const scale = img.width < 1100 ? 2 : 1;
+  const c = document.createElement("canvas"); c.width = img.width * scale; c.height = img.height * scale;
+  const g = c.getContext("2d"); g.imageSmoothingQuality = "high"; g.drawImage(img, 0, 0, c.width, c.height);
+  const d = g.getImageData(0, 0, c.width, c.height), px = d.data;
+  let sum = 0; for (let i = 0; i < px.length; i += 4) sum += 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+  const dark = sum / (px.length / 4) < 128;   // dark-mode slips read much better inverted
+  for (let i = 0; i < px.length; i += 4){
+    let y = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+    if (dark) y = 255 - y;
+    y = y < 150 ? Math.max(0, y - 40) : Math.min(255, y + 40);   // push text and background apart
+    px[i] = px[i + 1] = px[i + 2] = y;
+  }
+  g.putImageData(d, 0, 0);
+  return c;
+}
+async function readScreenshot(file){
+  try {
+    slip.busy = "Loading the text reader (first time only)..."; renderSlip();
+    if (!window.Tesseract) await loadScript(OCR_SRC);
+    const canvas = await prepImage(file);
+    slip.busy = "Reading your screenshot..."; renderSlip();
+    const worker = await Tesseract.createWorker("eng", 1, window.TS_OCR_OPTS || {});
+    const {data} = await worker.recognize(canvas);
+    await worker.terminate();
+    slip.lastText = data.text;
+    await readSlipText(data.text);
+  } catch(e){
+    slip.busy = ""; slip.msg = "Couldn't read that image. Try a tighter screenshot of just the bet slip, or paste the text instead."; renderSlip();
+  }
+}
+
+const parlayChance = legs => legs.reduce((p, l) => p * (l.unsupported ? (l.p != null ? l.p : 1) : (l.p != null ? l.p : 1)), 1);
+function renderSlip(){
+  const host = $("slip"); if (!host) return;
+  host.innerHTML = "";
+  if (!slip.open){
+    host.append(el("div", {class:"bar-row", style:"justify-content:space-between"},
+      el("div", {}, el("h2", {text:"Check a bet slip", style:"margin:0"}), el("p", {class:"sub", style:"margin:4px 0 0", text:"Upload a screenshot from DraftKings, FanDuel, or any book, or paste the legs. You'll get each leg's chance and the parlay's."})),
+      el("button", {class:"btn primary", text:"Check a slip", onclick: () => { slip.open = true; renderSlip(); }})));
+    return;
+  }
+  host.append(el("div", {class:"bar-row", style:"justify-content:space-between"}, el("h2", {text:"Check a bet slip", style:"margin:0"}),
+    el("button", {class:"btn", text:"Close", onclick: () => { slip = {open:false, legs:[], odds:null, stake:null, busy:"", idx: slip.idx}; renderSlip(); }})));
+
+  // inputs
+  const file = el("input", {type:"file", accept:"image/*", "aria-label":"Bet slip screenshot", class:"file-in"});
+  file.onchange = () => { if (file.files[0]) readScreenshot(file.files[0]); };
+  const drop = el("label", {class:"drop"}, file, el("strong", {text:"Upload a screenshot"}), el("small", {text:"Read on your device. Nothing is sent anywhere."}));
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+  drop.ondragleave = () => drop.classList.remove("over");
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); const f = e.dataTransfer.files[0]; if (f) readScreenshot(f); };
+  const ta = el("textarea", {class:"slip-ta", placeholder:"Or paste the slip, or type legs, one per line:\nJosh Allen over 249.5 passing yards\nJames Cook anytime TD\nNikola Jokic 25+ points", "aria-label":"Bet slip text"});
+  const go = el("button", {class:"btn primary", text:"Read these legs", onclick: () => { if (ta.value.trim()) readSlipText(ta.value); }});
+  host.append(el("div", {class:"slip-in"}, drop, el("div", {class:"slip-paste"}, ta, el("div", {class:"actions", style:"justify-content:flex-start;margin-top:8px"}, go))));
+  if (slip.busy) host.append(el("p", {class:"sub", text:slip.busy}));
+  if (slip.msg) host.append(el("p", {class:"err", text:slip.msg}));
+  if (!slip.legs.length) return;
+
+  // legs
+  const ul = el("ul", {class:"legs"});
+  slip.legs.forEach((leg, i) => {
+    const rm = el("button", {class:"x", text:"×", "aria-label":"Remove leg", onclick: () => { slip.legs.splice(i, 1); renderSlip(); }});
+    if (leg.unsupported){
+      const pin = el("input", {type:"number", min:1, max:99, class:"odds-in", placeholder:"%", value: leg.p != null ? Math.round(leg.p * 100) : "", "aria-label":"Your chance for this leg"});
+      pin.onchange = () => { const v = Number(pin.value); leg.p = v > 0 && v < 100 ? v / 100 : null; renderSlip(); };
+      if (leg.p == null && leg.odds != null){ leg.p = implied(leg.odds); pin.value = Math.round(leg.p * 100); }
+      ul.append(el("li", {class:"leg unsup"}, el("div", {}, el("strong", {text:leg.text}),
+        el("small", {text:"Team bets and unknown players can't be modeled. Enter your own chance" + (leg.odds != null ? " (filled in from the leg's odds)" : "") + ", or leave blank to skip it."})),
+        el("label", {class:"field"}, "Chance", pin), rm));
+      return;
+    }
+    const sel = el("select", {class:"inline", "aria-label":"Prop"});
+    sel.append(el("option", {value:"", text:"Pick the prop..."}));
+    (leg.props || []).forEach(([k, l]) => sel.append(el("option", {value:k, text:l, selected: k === leg.key ? "" : false})));
+    sel.onchange = async () => { leg.key = sel.value || null; leg.line = null; await modelLeg(leg); renderSlip(); };
+    const lin = el("input", {type:"number", step:"0.5", min:"0", value: leg.line ?? "", class:"line-in sm", "aria-label":"Line"});
+    lin.onchange = async () => { leg.line = Number(lin.value); await modelLeg(leg); renderSlip(); };
+    const side = el("span", {class:"seg"}, ...["over","under"].map(sd => el("button", {text: sd === "over" ? "Over" : "Under", "aria-pressed": String(leg.side === sd),
+      onclick: async () => { leg.side = sd; await modelLeg(leg); renderSlip(); }})));
+    const pct1 = leg.p != null ? pct(leg.p) : "–";
+    ul.append(el("li", {class:"leg"},
+      el("div", {}, el("strong", {text:leg.name}), el("span", {class:"tag", text:sportLabel(leg.sport)}),
+        el("small", {text:` ${leg.team || ""}${leg.opp ? " vs " + leg.opp : ""}${leg.note ? ". " + leg.note : ""}${!leg.sure ? ". Check this one, I wasn't sure I read it right" : ""}`})),
+      el("div", {class:"leg-ctl"}, sel, lin, side),
+      el("div", {class:"leg-p"}, el("span", {class:"num", text:pct1}), el("small", {text: leg.odds != null ? `book ${pct(implied(leg.odds))}` : "model"})),
+      rm));
+  });
+  host.append(ul);
+
+  // add a leg by typing
+  const add = el("input", {type:"text", class:"add-leg", placeholder:"Add a leg: e.g. McDavid over 3.5 shots", "aria-label":"Add a leg"});
+  add.onkeydown = e => { if (e.key === "Enter" && add.value.trim()){ const v = add.value; add.value = ""; readSlipText(v); } };
+  host.append(add);
+
+  // the parlay
+  const modeled = slip.legs.filter(l => l.p != null);
+  const skipped = slip.legs.length - modeled.length;
+  const pAll = parlayChance(modeled);
+  const oddsIn = el("input", {type:"text", inputmode:"numeric", class:"odds-in", value: slip.odds != null ? (slip.odds > 0 ? "+" + slip.odds : slip.odds) : "", placeholder:"+650", "aria-label":"Slip odds"});
+  oddsIn.onchange = () => { const n = Number(oddsIn.value); slip.odds = Math.abs(n) >= 100 ? n : null; renderSlip(); };
+  const book = slip.odds != null ? implied(slip.odds) : null;
+  const games = {}; slip.legs.forEach(l => { if (l.gameKey) games[l.gameKey] = (games[l.gameKey] || 0) + 1; });
+  const sameGame = Object.values(games).some(n => n > 1);
+  const weakest = [...modeled].sort((a, b) => a.p - b.p)[0];
+  const sum = el("div", {class:"verdict-row"},
+    el("div", {class:"big"}, el("span", {class:"num", text: modeled.length ? pct(pAll) : "–"}),
+      el("span", {class:"cap", text:`model chance all ${modeled.length} leg${modeled.length === 1 ? "" : "s"} hit${skipped ? ` (${skipped} skipped)` : ""}`})),
+    el("div", {class:"facts"},
+      el("div", {}, el("span", {class:"lbl", text:"Slip odds"}), oddsIn),
+      book != null ? el("div", {}, el("span", {class:"lbl", text:"Book implies"}), el("strong", {text:pct(book)})) : null,
+      book != null && modeled.length ? el("div", {}, el("span", {class:"lbl", text:"Edge"}), el("strong", {class: pAll - book >= 0.02 ? "pos" : pAll - book <= -0.02 ? "neg" : "", text:(pAll >= book ? "+" : "") + (Math.round((pAll - book) * 1000) / 10) + " pts"})) : null,
+      el("div", {}, el("span", {class:"lbl", text:"Fair odds"}), el("strong", {text: modeled.length ? toAmerican(pAll) : "–"})),
+      slip.stake ? el("div", {}, el("span", {class:"lbl", text:"Stake"}), el("strong", {text:"$" + slip.stake})) : null));
+  host.append(sum);
+  const notes = [];
+  if (weakest && modeled.length > 1) notes.push(`Weakest leg: ${weakest.name} ${weakest.side} ${weakest.line} ${weakest.label} at ${pct(weakest.p)}.`);
+  if (sameGame) notes.push("Some legs are from the same game. Those tend to move together (a big passing day helps the QB and his receivers), so the real chance can be higher or lower than legs multiplied together, and books price same-game parlays with that in mind.");
+  if (book != null && modeled.length) notes.push(pAll < book ? "The model thinks this slip is less likely than the book's price, which is normal for parlays: the book's cut compounds with every leg." : "The model rates this slip above the book's price.");
+  notes.forEach(n => host.append(el("p", {class:"why", text:n})));
+  host.append(el("div", {class:"actions", style:"justify-content:flex-start"},
+    el("button", {class:"btn primary", text: slip.legs.length > 1 ? "Track this parlay" : "Track this bet", disabled: modeled.length ? false : "", onclick: trackSlip}),
+    el("button", {class:"btn", text:"Start over", onclick: () => { slip.legs = []; slip.odds = null; slip.stake = null; slip.msg = ""; renderSlip(); }})));
+}
+function trackSlip(){
+  const legs = slip.legs.filter(l => l.p != null).map(l => l.unsupported
+    ? {unsupported: true, text: l.text, p: l.p, pre: l.p, manual: null}
+    : {sport: l.sport, pid: l.pid, name: l.name, team: l.team, grp: l.grp, key: l.key, label: l.label, line: l.line, side: l.side,
+       mu: l.mu, sd: l.sd, count: l.count, disp: l.disp, pre: l.p, outsMu: l.outsMu, start: l.start, opp: l.opp, hist: []});
+  if (!legs.length) return;
+  const bet = legs.length === 1 && !legs[0].unsupported
+    ? {...legs[0], id: Date.now().toString(36), sport: legs[0].sport, odds: slip.odds, stake: slip.stake, added: new Date().toISOString()}
+    : {id: Date.now().toString(36), type: "parlay", legs, odds: slip.odds, stake: slip.stake, pre: parlayChance(legs.map(l => ({...l, p: l.pre}))),
+       start: legs.map(l => l.start).filter(Boolean).sort()[0] || null, added: new Date().toISOString(), hist: []};
+  tracked.unshift(bet); saveTracked(); renderTracker(); pollSoon(0);
+  toast(bet.type === "parlay" ? `Tracking your ${legs.length}-leg parlay.` : `Tracking ${bet.name}.`);
+  slip = {open:false, legs:[], odds:null, stake:null, busy:"", idx: slip.idx}; renderSlip();
+  $("tracker").scrollIntoView({behavior:"smooth", block:"start"});
+}
 
 /* ---------- Boot ---------- */
 function readHash(){
@@ -725,6 +982,7 @@ async function switchSport(id, playerId){
   const id = readHash();
   if (!id) sport = store.get("tradescale:props-sport") || sport;
   renderTracker();
+  renderSlip();
   switchSport(sport, id);
   pollSoon(1500);
 })();

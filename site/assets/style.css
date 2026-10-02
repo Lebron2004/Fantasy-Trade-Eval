@@ -322,3 +322,32 @@ details.panel summary::after{content:" +";color:var(--muted)} details.panel[open
 #toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translate(-50%,20px);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:12px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;max-width:90vw;z-index:50}
 #toast.show{opacity:1;transform:translate(-50%,0)}
 @media (max-width:560px){.trk{grid-template-columns:1fr auto}.trk .x{grid-column:2;grid-row:1;align-self:start}.trk-num{grid-column:1 / -1;flex-direction:row;align-items:center;justify-content:space-between}}
+
+/* bet slips */
+.slip-in{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:14px;margin-top:14px}
+.drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;text-align:center;border:2px dashed var(--line);border-radius:14px;padding:22px 14px;cursor:pointer;background:var(--paper);min-height:150px}
+.drop:hover,.drop.over{border-color:var(--ink)}
+.drop small{color:var(--muted)}
+.file-in{position:absolute;width:1px;height:1px;opacity:0}
+.drop:focus-within{outline:3px solid var(--gold);outline-offset:2px}
+.slip-ta{width:100%;min-height:150px;border:1px solid var(--line);background:var(--paper);border-radius:12px;padding:10px 12px;font:inherit;color:var(--ink);resize:vertical}
+.legs{list-style:none;margin:16px 0 0;padding:0;display:grid;gap:8px}
+.leg{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1.6fr) auto auto;gap:12px;align-items:center;border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.leg.unsup{grid-template-columns:minmax(0,1fr) auto auto;background:var(--paper)}
+.leg strong{margin-right:6px}
+.leg small{display:block;color:var(--muted);font-size:.82rem}
+.leg .tag{font-family:var(--display);font-weight:700;font-size:.78rem;padding:1px 7px;border-radius:6px;background:var(--paper);color:var(--muted)}
+.leg-ctl{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.leg-ctl select{max-width:190px}
+.line-in.sm{width:5.2rem;font-size:1.1rem;padding:4px 8px}
+.leg-p{text-align:right}
+.leg-p .num{display:block;font-family:var(--display);font-weight:800;font-size:1.7rem;line-height:1}
+.add-leg{width:100%;margin-top:10px;border:1px dashed var(--line);background:transparent;border-radius:12px;padding:10px 12px;color:var(--ink)}
+.plegs{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:4px}
+.plegs li{display:grid;grid-template-columns:1.2rem minmax(0,1fr) auto auto;gap:8px;align-items:center;font-size:.92rem}
+.plegs .ic{font-weight:700;color:var(--muted);text-align:center}
+.plegs li.r-won .ic{color:var(--get)} .plegs li.r-lost .ic{color:var(--send)}
+.plegs li.r-lost .pl-txt{text-decoration:line-through;color:var(--muted)}
+.plegs small{color:var(--muted)}
+.btn.tiny{padding:2px 8px;font-size:.8rem;border-radius:8px}
+@media (max-width:760px){.slip-in{grid-template-columns:1fr}.leg{grid-template-columns:1fr auto}.leg-ctl{grid-column:1 / -1}.leg-p{grid-column:1;text-align:left}.plegs li{grid-template-columns:1.2rem 1fr}.plegs small{grid-column:2}}
