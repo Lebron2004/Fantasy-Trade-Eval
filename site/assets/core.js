@@ -292,6 +292,13 @@ const TS = (() => {
     return {input, refreshPlaceholder};
   }
 
+  /* ---------- Hit-chance colors ----------
+     One scale everywhere a chance shows up: red for long shots, through orange and amber, to green for likely hits.
+     chanceClass(0.1) -> "ch ch-1"; pair it with any element showing that chance (style.css colors it). */
+  const CHANCE_TIERS = [0.25, 0.4, 0.55, 0.7];
+  const chanceTier = p => p == null || isNaN(p) ? 0 : 1 + CHANCE_TIERS.filter(t => p >= t).length;
+  const chanceClass = p => { const t = chanceTier(p); return t ? `ch ch-${t}` : ""; };
+
   function ago(iso){
     if (!iso) return "never";
     const m = Math.max(1, Math.round((Date.now() - new Date(iso)) / 60000));
@@ -302,6 +309,6 @@ const TS = (() => {
 
   return {SPORTS, sportName, store, settings, setSetting, onSettings, getJSON, norm, pools, loadSport,
           ageOf, adjusted, packageScore, el, injTag, metaText, splitText, toItem, settingsBar, makeSearch, ago,
-          matchupWord, matchupTag, insightText, aiLine,
+          matchupWord, matchupTag, insightText, aiLine, chanceTier, chanceClass,
           signalOf, signalText, signalTag, newsFor, allNews, newsLine, newsWhen, HURT};
 })();

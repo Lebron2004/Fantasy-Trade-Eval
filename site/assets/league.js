@@ -836,7 +836,7 @@ function ideaCard(f, me, E, L){
 /* ---------- Page ---------- */
 function renderSports(){
   const nav = $("sports"); nav.innerHTML = "";
-  SPORTS.forEach(([id, label]) => nav.append(el("button", {text:label, "aria-pressed": String(sport === id), onclick: () => switchSport(id)})));
+  SPORTS.forEach(([id, label]) => nav.append(el("button", {text:label, "data-sport":id, "aria-pressed": String(sport === id), onclick: () => switchSport(id)})));
 }
 const refreshedFiles = new Set();
 async function refreshFromFile(L){

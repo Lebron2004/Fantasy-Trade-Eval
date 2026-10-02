@@ -1,6 +1,6 @@
 /* Props page (NFL): hit-rate history, situational and scheme splits, and a transparent projection. */
 (() => {
-const {el, norm, getJSON, store} = TS;
+const {el, norm, getJSON, store, chanceClass} = TS;
 const $ = id => document.getElementById(id);
 const SPORTS = [["nfl","Football"],["nba","Basketball"],["nhl","Hockey"],["mlb","Baseball"]];
 const CFG = {
@@ -405,7 +405,7 @@ function render(){
     if (ipO && ipU){ const fair = (side === "over" ? ipO : ipU) / (ipO + ipU); book = fair; bookTxt = `Book's fair chance (vig removed): ${pct(fair)}`; }
     else if (side === "over" && ipO){ book = ipO; bookTxt = `Book implies ${pct(ipO)}`; }
     else if (side === "under" && ipU){ book = ipU; bookTxt = `Book implies ${pct(ipU)}`; }
-    const big = el("div", {class:"big"}, el("span", {class:"num", text:pct(pSide)}),
+    const big = el("div", {class:"big"}, el("span", {class:"num " + chanceClass(pSide), text:pct(pSide)}),
       el("span", {class:"cap", text:`${ch.trained ? "trained model" : "model"} chance of ${side === "over" ? "Over" : "Under"} ${line} ${labelOf(key)}`}));
     verdict.append(big);
     const facts = el("div", {class:"facts"},
@@ -429,7 +429,7 @@ function render(){
    ng ? [`vs ${ng.opp}`, all.filter(g => g.o === ng.opp)] : null].filter(Boolean).forEach(([lbl, list]) => {
     const r = hitRate(list, key, line, side);
     strip.append(el("div", {class:"hr"}, el("span", {class:"lbl", text:lbl}),
-      r ? el("strong", {text:`${r.h}/${r.n - r.p}`}) : el("strong", {text:"–"}), r ? el("small", {text:pct(r.rate)}) : null));
+      r ? el("strong", {text:`${r.h}/${r.n - r.p}`}) : el("strong", {text:"–"}), r ? el("small", {class:chanceClass(r.rate), text:pct(r.rate)}) : null));
   });
   ctl.append(strip);
   app.append(ctl);
@@ -585,7 +585,7 @@ function splitsPanel(all, key, line, side, ng, opp){
       el("td", {}, label, now ? el("span", {class:"wk", text: sport === "nfl" ? "This week" : "Next game"}) : null),
       el("td", {text:list.length}),
       el("td", {}, fmt1(avg), el("small", {class: avg > allAvg * 1.08 ? "pos" : avg < allAvg * 0.92 ? "neg" : "", text:` ${avg >= allAvg ? "▲" : "▼"}`})),
-      el("td", {}, el("div", {class:"hrbar"}, el("i", {style:`width:${Math.round(r.rate * 100)}%`, class: r.rate >= 0.6 ? "good" : r.rate <= 0.4 ? "bad" : ""}), el("span", {text:`${r.h}/${r.n - r.p} (${pct(r.rate)})`})))));
+      el("td", {}, el("div", {class:"hrbar"}, el("i", {style:`width:${Math.round(r.rate * 100)}%`, class:chanceClass(r.rate)}), el("span", {text:`${r.h}/${r.n - r.p} (${pct(r.rate)})`})))));
   });
   tbl.append(tb);
   panel.append(el("div", {class:"tablewrap"}, tbl), el("p", {class:"why", style:"margin-top:8px", text:`Arrows compare each split's average with his overall average (${fmt1(allAvg)}). Small samples swing a lot, so read the games column first.`}));
@@ -655,7 +655,7 @@ function matesPanel(all, key, line, side){
       const r = hitRate(list, key, line, side);
       tb.append(el("tr", {}, el("td", {text:l}), el("td", {text:list.length}),
         el("td", {text: list.length ? fmt1(list.reduce((s, g) => s + statOf(g, key), 0) / list.length) : "–"}),
-        el("td", {text: r ? `${r.h}/${r.n - r.p} (${pct(r.rate)})` : "–"})));
+        el("td", {class: r ? chanceClass(r.rate) : "", text: r ? `${r.h}/${r.n - r.p} (${pct(r.rate)})` : "–"})));
     });
     tbl.append(tb); panel.append(el("div", {class:"tablewrap"}, tbl));
     if (without.length && without.length < 3) panel.append(el("p", {class:"why", text:"Only a game or two without him, so treat this as a hint, not a trend."}));
@@ -746,7 +746,7 @@ function parlayRow(b){
       el("div", {class:"trk-status"}, live && !b.result ? el("span", {class:"dot"}) : null,
         b.result ? (b.result === "won" ? "Won" : "Lost") : `${won} of ${b.legs.length} legs in${live ? ", games live" : b.start ? ", first game " + startText(b) : ""}`),
       legsUl),
-    el("div", {class:"trk-num"}, el("span", {class:"num", text: b.result ? (b.result === "won" ? "✓" : "✕") : pct(ch)}),
+    el("div", {class:"trk-num"}, el("span", {class:"num " + (b.result ? "" : chanceClass(ch)), text: b.result ? (b.result === "won" ? "✓" : "✕") : pct(ch)}),
       el("small", {text: b.result ? `pre-game ${pct(b.pre)}` : `was ${pct(b.pre)} pre-game`}), spark(b.hist)),
     el("button", {class:"x", text:"×", "aria-label":"Stop tracking this parlay", onclick: () => { tracked = tracked.filter(t => t.id !== b.id); saveTracked(); renderTracker(); }}));
 }
@@ -766,7 +766,7 @@ function liveRow(b){
         el("span", {text:`${fmt1(cur)} of ${b.line}${ch && ch.approx ? " (approx.)" : ""}`})) : null,
       L.inBox === false && L.state === "live" ? el("small", {class:"split", text:"Not in the box score yet."}) : null),
     el("div", {class:"trk-num"},
-      el("span", {class:"num", text: b.result ? (b.result === "won" ? "✓" : b.result === "lost" ? "✕" : "=") : ch ? pct(ch.chance) : pct(b.pre)}),
+      el("span", {class:"num " + (b.result ? "" : chanceClass(ch ? ch.chance : b.pre)), text: b.result ? (b.result === "won" ? "✓" : b.result === "lost" ? "✕" : "=") : ch ? pct(ch.chance) : pct(b.pre)}),
       el("small", {text: ch && !b.result ? `was ${pct(b.pre)} pre-game` : b.result ? `pre-game ${pct(b.pre)}` : "pre-game chance"}),
       spark(b.hist)),
     el("button", {class:"x", text:"×", "aria-label":`Stop tracking ${b.name}`, onclick: () => { tracked = tracked.filter(t => t.id !== b.id); saveTracked(); renderTracker(); }}));
@@ -865,7 +865,7 @@ async function refreshPlayerLive(){
     el("div", {class:"bar-row", style:"justify-content:space-between"},
       el("div", {}, el("span", {class:"lbl", text: L.state === "live" ? "Live now" : "Final"}),
         el("strong", {class:"lc-score", text:`${p.team} ${L.score[0]}–${L.score[1]} ${L.opp}`}), el("span", {class:"split", text:"  " + (L.detail || "")})),
-      ch ? el("div", {class:"lc-num"}, el("span", {class:"num", text: ch.result ? (ch.result === "won" ? "Hit" : ch.result === "lost" ? "Missed" : "Push") : pct(ch.chance)}),
+      ch ? el("div", {class:"lc-num"}, el("span", {class:"num " + (ch.result ? "" : chanceClass(ch.chance)), text: ch.result ? (ch.result === "won" ? "Hit" : ch.result === "lost" ? "Missed" : "Push") : pct(ch.chance)}),
         el("small", {text: ch.result ? `${fmt1(ch.cur)} ${labelOf(ui.stat)}` : `live chance of ${ui.side} ${ui.line}`})) : null),
     ch ? el("div", {class:"trk-prog", style:"margin-top:10px"}, el("div", {class:"bar"}, el("i", {style:`width:${Math.round(Math.min(1, ch.cur / Math.max(bet.line, 0.5)) * 100)}%`})),
       el("span", {text:`${fmt1(ch.cur)} ${labelOf(ui.stat)} so far, line ${ui.line}${ch.f > 0 ? `, about ${Math.round(ch.f * 100)}% of the game left` : ""}${ch.approx ? " (total bases approximate)" : ""}`}))
@@ -1056,7 +1056,7 @@ function renderSlip(){
       el("div", {}, el("strong", {text:leg.name}), el("span", {class:"tag", text:sportLabel(leg.sport)}),
         el("small", {text:` ${leg.team || ""}${leg.opp ? " vs " + leg.opp : ""}${leg.note ? ". " + leg.note : ""}${!leg.sure ? ". Check this one, I wasn't sure I read it right" : ""}`})),
       el("div", {class:"leg-ctl"}, sel, lin, side),
-      el("div", {class:"leg-p"}, el("span", {class:"num", text:pct1}), el("small", {text: leg.odds != null ? `book ${pct(implied(leg.odds))}` : "model"})),
+      el("div", {class:"leg-p"}, el("span", {class:"num " + chanceClass(leg.p), text:pct1}), el("small", {text: leg.odds != null ? `book ${pct(implied(leg.odds))}` : "model"})),
       rm));
   });
   host.append(ul);
@@ -1077,7 +1077,7 @@ function renderSlip(){
   const sameGame = Object.values(games).some(n => n > 1);
   const weakest = [...modeled].sort((a, b) => a.p - b.p)[0];
   const sum = el("div", {class:"verdict-row"},
-    el("div", {class:"big"}, el("span", {class:"num", text: modeled.length ? pct(pAll) : "–"}),
+    el("div", {class:"big"}, el("span", {class:"num " + (modeled.length ? chanceClass(pAll) : ""), text: modeled.length ? pct(pAll) : "–"}),
       el("span", {class:"cap", text:`${modeled.some(l => !l.kind && !l.unsupported) ? "model chance" : "chance"} all ${modeled.length} leg${modeled.length === 1 ? "" : "s"} hit${skipped ? ` (${skipped} skipped)` : ""}`})),
     el("div", {class:"facts"},
       el("div", {}, el("span", {class:"lbl", text:"Slip odds"}), oddsIn),
@@ -1131,7 +1131,7 @@ function teamLegRow(leg, rm){
     el("div", {}, el("strong", {text: legText(leg)}), el("span", {class:"tag", text:sportLabel(leg.sport)}),
       el("small", {text:`${where.trim()}${!leg.sure ? `${where ? ". " : ""}Check this one, I wasn't sure I read it right` : ""}`})),
     ctl,
-    el("div", {class:"leg-p"}, el("span", {class:"num", text: leg.p != null ? pct(leg.p) : "–"}), el("small", {text: from})),
+    el("div", {class:"leg-p"}, el("span", {class:"num " + chanceClass(leg.p), text: leg.p != null ? pct(leg.p) : "–"}), el("small", {text: from})),
     rm);
 }
 function trackSlip(){
@@ -1163,7 +1163,7 @@ function readHash(){
 }
 function renderSports(){
   const nav = $("sports"); if (!nav) return; nav.innerHTML = "";
-  SPORTS.forEach(([id, label]) => nav.append(el("button", {text:label, "aria-pressed": String(sport === id), onclick: () => {
+  SPORTS.forEach(([id, label]) => nav.append(el("button", {text:label, "data-sport":id, "aria-pressed": String(sport === id), onclick: () => {
     if (id !== sport) switchSport(id);
     else if (player && index){ player = null; history.replaceState(null, "", `#sp=${id}`); render(); }   // back to best bets
   }})));
