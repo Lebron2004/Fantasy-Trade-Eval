@@ -2,14 +2,14 @@ name: Update players and deploy
 
 on:
   schedule:
-    - cron: "0 11 * * *"   # every day at 11:00 UTC (7 AM Eastern during daylight time)
-  workflow_dispatch:        # "Run workflow" button on the Actions tab
+    - cron: "0 11 * * *"
+  workflow_dispatch:
   push:
     branches: [main]
     paths: ["site/*.html", "site/assets/**", "scripts/**", "leagues.json", ".github/workflows/**"]
 
 permissions:
-  contents: write   # commit the refreshed data back to the repo
+  contents: write
   pages: write
   id-token: write
 
@@ -33,14 +33,15 @@ jobs:
       - name: Pull latest players, values and team changes
         run: python scripts/update_players.py
 
-      - name: Build props data (game logs, matchups, scheme splits)
-        continue-on-error: true   # if nflverse hiccups, keep yesterday's props and still deploy everything else
+      - name: Build props data (NFL, NBA, NHL, MLB)
+        continue-on-error: true
         run: |
           pip install --quiet pandas pyarrow
-          python scripts/update_props.py
+          python scripts/update_props.py || echo "NFL props failed"
+          python scripts/update_props_more.py
 
       - name: Sync ESPN and Yahoo leagues
-        continue-on-error: true   # an expired login shouldn't block the rest of the daily update
+        continue-on-error: true
         run: python scripts/sync_leagues.py
         env:
           ESPN_S2: ${{ secrets.ESPN_S2 }}
@@ -53,7 +54,10 @@ jobs:
         run: |
           git config user.name "trade-scale-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "site/data/props/" >> .git/info/exclude
+          git rm -r -q --cached --ignore-unmatch site/data/props
           git add site/data
+          if [ -f site/data/props/mlb/_cache.json ]; then git add -f site/data/props/mlb/_cache.json; fi
           git diff --cached --quiet && exit 0
           git commit -m "Player data $(date -u +%Y-%m-%d)"
           git pull --rebase -X theirs origin main
