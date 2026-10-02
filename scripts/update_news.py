@@ -124,7 +124,7 @@ def espn_injuries(sport, pool):
                 status[str(r[0])] = st
             text = clean(inj.get("shortComment") or inj.get("longComment") or "")
             when = iso(inj.get("date"))
-            if text and when:
+            if len(text) >= 25 and when:   # skip placeholder notes like "ir"
                 items.append({"d": when, "sport": sport, "id": str(r[0]), "name": r[1], "team": r[2], "kind": "note", "to": st, "text": text, "v": r[5]})
     return items, status
 
