@@ -25,16 +25,20 @@ From then on it runs by itself every day at 11:00 UTC. To change the time, edit 
 - **Waiver pickups**: available players who'd start for you right away, plus the best depth at your weakest spots.
 - **Power rankings**: every team's lineup strength, biggest strength, and biggest need. Click a team to compare side by side.
 
-**Props** (`props.html`): pick any NFL player and prop (yards, receptions, TDs, completions, and more) and set the line. You get:
+**Props** (`props.html`): pick a sport (football, basketball, hockey, or baseball), any player, and a prop, then set the line. Props include yards, receptions, and TDs (NFL); points, rebounds, assists, threes, and combos (NBA); shots, points, goals, hits, blocks, and goalie saves (NHL); hits, total bases, home runs, RBIs, and pitcher strikeouts and outs (MLB). You get:
 
 - **A game-by-game bar chart** against the line: green for hits, red for misses. Tap a bar for the opponent, score, spread, total, and the full stat line.
 - **Hit rates**: last 5, last 10, this season, last season, and against this week's opponent.
 - **Situational splits**: home/away, favored/underdog, high/low totals, dome/outdoors, cold and wind, division games, and tough or soft defenses. Rows that match this week's game are highlighted.
-- **Scheme matchup**: how he does against the blitz, against man vs. zone coverage, and against light or stacked boxes, next to how often this week's opponent does each.
+- **Scheme matchup** (football): how he does against the blitz, against man vs. zone coverage, and against light or stacked boxes, next to how often this week's opponent does each.
+- **Rest and role** (basketball and hockey): back-to-backs, days of rest, starting vs. off the bench, and big-minute games.
+- **Opponent profile**: what the next opponent allows per game to his position, compared with the league average.
 - **With or without a teammate**: his numbers when a teammate plays vs. sits.
+- **Live tracking**: hit **Track this prop** to pin a bet. While the game is on, the Tracked props panel updates every 30 seconds with his current stat vs. the line, the live chance next to the pre-game chance, and a small chart of how it has moved. It marks Won or Lost when the bet is settled, with optional browser alerts. Opening any player whose game is live also shows a live card for the prop you're viewing. Live scores come straight from ESPN's public scoreboard in the visitor's browser (no server or key), polling only while a game is on and the tab is visible.
+- **Check a bet slip**: upload a screenshot from DraftKings, FanDuel, or any book, or paste the legs. The page reads the slip in your browser (Tesseract.js OCR, loaded from jsDelivr the first time; the image never leaves your device), finds each player across all four sports, and works out the market, line, and over/under, including alt lines like "25+ Points" and yes-markets like "Anytime TD Scorer." Each leg gets its model chance, and the parlay gets the combined chance next to the book's implied odds, the edge, and the weakest leg. Same-game legs are flagged, since they're correlated. Team bets (spreads, totals, moneylines) can't be modeled, so you enter your own chance for those. One click tracks the whole parlay live.
 - **A projection and model chance** built in four visible steps (recent form, opponent defense, scheme fit, game script). Enter the sportsbook's odds to see the implied chance, the no-vig chance, and the edge.
 
-Props data comes from [nflverse](https://github.com/nflverse) (CC-BY 4.0), with charting data from FTN Data. Man/zone coverage is published only after each season, so coverage splits use past seasons. True receiver-vs-cornerback matchups need paid tracking data and aren't included.
+Props data comes from [nflverse](https://github.com/nflverse) (CC-BY 4.0) with charting from FTN Data for football, [SportsDataverse](https://github.com/sportsdataverse) for basketball and hockey, and the MLB Stats API for baseball. Props data is rebuilt on every run and deployed with the site, but not stored in git, so the repo stays small. The one exception is `site/data/props/mlb/_cache.json`, which caches last season's baseball game logs. Man/zone coverage is published only after each season, so coverage splits use past seasons. True receiver-vs-cornerback matchups need paid tracking data and aren't included.
 
 ## How player values work
 
@@ -116,7 +120,7 @@ python scripts/update_players.py nfl    # just one
 cd site && python -m http.server 8000   # then open http://localhost:8000
 ```
 
-`update_players.py` uses only the standard library. `update_props.py` needs `pip install pandas pyarrow`. Open the page through the local server rather than by double-clicking `index.html`, because browsers block loading the data files from `file://`.
+`update_players.py` uses only the standard library. The props scripts need `pip install pandas pyarrow`. Run `update_players.py` first, since the props builders read its roster files for current teams and full names. Open the page through the local server rather than by double-clicking `index.html`, because browsers block loading the data files from `file://`.
 
 ## Tuning
 
@@ -131,11 +135,14 @@ cd site && python -m http.server 8000   # then open http://localhost:8000
 ```
 .github/workflows/update.yml   daily data refresh + deploy
 scripts/update_players.py      pulls players, values, team changes
-scripts/update_props.py        builds props data from nflverse (needs pandas + pyarrow)
+scripts/update_props.py        builds NFL props data from nflverse (needs pandas + pyarrow)
+scripts/update_props_more.py   builds NBA, NHL, and MLB props data (needs pandas + pyarrow)
 site/index.html                trade calculator
 site/league.html               league analysis
 site/props.html                player props
-site/assets/props.js           props charts, splits, projection model
+site/assets/props.js           props charts, splits, projection model, tracker
+site/assets/live.js            live ESPN box scores and in-game chances
+site/assets/slip.js            bet slip reader (players, markets, lines, odds)
 site/assets/style.css          shared styles
 site/assets/core.js            shared data loading, valuation, search
 site/assets/trade.js           trade calculator logic
