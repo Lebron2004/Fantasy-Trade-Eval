@@ -43,12 +43,14 @@ const LIVE = (() => {
     return {state: ty.state || "pre", completed: !!ty.completed, detail: ty.shortDetail || ty.detail || "",
             period: st.period || 0, clock: typeof st.clock === "number" ? st.clock : null};
   }
+  // team: our code, or for team bets {abbr, nick} (ESPN's code plus the nickname, which survives code changes)
   async function findGame(sport, team){
-    const sb = await scoreboard(sport), want = espnTeam(sport, team);
+    const sb = await scoreboard(sport), code = typeof team === "string" ? team : team.abbr, nick = typeof team === "string" ? "" : norm(team.nick);
+    const want = espnTeam(sport, code);
     for (const ev of sb.events || []){
       const comp = (ev.competitions || [])[0] || {};
       const cs = comp.competitors || [];
-      const me = cs.find(c => c.team && (c.team.abbreviation === want || c.team.abbreviation === team));
+      const me = cs.find(c => c.team && (c.team.abbreviation === want || c.team.abbreviation === code || (nick && norm(c.team.name || c.team.shortDisplayName) === nick)));
       if (!me) continue;
       const them = cs.find(c => c !== me) || {};
       return {id: ev.id, date: ev.date, home: me.homeAway === "home", status: statusOf(comp),
@@ -229,6 +231,53 @@ const LIVE = (() => {
     return {cur, f, chance: Math.max(0, Math.min(1, chance)), result, muRem, approx: !!(live.x && live.x._tbApprox && bet.key.includes("tb"))};
   }
 
+  /* ---------- team bets: moneyline, spread, totals ---------- */
+  // how much a full game's margin and total swing, in points/goals/runs
+  const SPREAD_SD = {nfl: 13.5, nba: 12.5, nhl: 2.3, mlb: 4.2}, TOTAL_SD = {nfl: 13.5, nba: 18, nhl: 2.3, mlb: 4.4};
+  function PhiInv(p){ let lo = -8, hi = 8; for (let i = 0; i < 60; i++){ const m = (lo + hi) / 2; if (Phi(m) < p) lo = m; else hi = m; } return (lo + hi) / 2; }
+  // chance a whole-number score X (remaining part of the game ~ normal) lands above "need"; plus the chance it lands exactly on it
+  function above(need, mu, sd){
+    if (sd <= 0) return {win: mu > need ? 1 : 0, tie: mu === need ? 1 : 0};
+    const k = Math.floor(need) + 1, win = 1 - Phi((k - 0.5 - mu) / sd);
+    const tie = Number.isInteger(need) ? Phi((need + 0.5 - mu) / sd) - Phi((need - 0.5 - mu) / sd) : 0;
+    return {win, tie};
+  }
+  async function teamLive(sport, team){
+    const g = await findGame(sport, team);
+    if (!g) return {state: "none"};
+    return {state: g.status.state === "in" ? "live" : g.status.state === "post" ? "final" : "pre",
+            detail: g.status.detail, status: g.status, score: g.score, opp: g.opp, me: g.myAbbr, home: g.home, date: g.date, gameId: g.id};
+  }
+  // leg: {sport, market: ml|spread|total|teamtotal, line, side, pre}; live from teamLive
+  function teamChance(leg, live){
+    const sp = leg.sport, f = live.state === "final" ? 0 : remaining(sp, live.status || {state: live.state}, live.home);
+    const [me, them] = live.score || [0, 0], pre = Math.min(0.97, Math.max(0.03, leg.pre || 0.5));
+    const sdS = SPREAD_SD[sp] || 10, sdT = (TOTAL_SD[sp] || 10) * (leg.market === "teamtotal" ? 0.7 : 1);
+    let win, push = 0, cur, need, sd, mu;
+    if (leg.market === "total" || leg.market === "teamtotal"){
+      cur = leg.market === "total" ? me + them : me;
+      // the pre-game chance tells us where the book expects the total to land
+      const z = PhiInv(pre), muFull = leg.side === "under" ? leg.line - sdT * z : leg.line + sdT * z;
+      mu = muFull * f; sd = sdT * Math.sqrt(f); need = leg.line - cur;
+      const a = above(need, mu, sd);
+      win = leg.side === "under" ? 1 - a.win - a.tie : a.win; push = a.tie;
+    } else {
+      const s = leg.market === "spread" ? leg.line || 0 : 0;   // a -1.5 favorite needs to win by 2
+      cur = me - them;
+      mu = (-s + sdS * PhiInv(pre)) * f; sd = sdS * Math.sqrt(f); need = -s - cur;
+      const a = above(need, mu, sd);
+      win = a.win; push = a.tie;
+      if (leg.market === "ml"){ win += push / 2; push = 0; }   // tied late: overtime is about a coin flip
+    }
+    let result = null;
+    if (f <= 0){
+      const margin = leg.market === "total" || leg.market === "teamtotal" ? (leg.side === "under" ? leg.line - cur : cur - leg.line) : cur + (leg.market === "spread" ? leg.line || 0 : 0);
+      result = margin > 0 ? "won" : margin < 0 ? "lost" : "push";
+      win = result === "won" ? 1 : 0;
+    } else if ((leg.market === "total" || leg.market === "teamtotal") && cur > leg.line) result = leg.side === "over" ? "won" : "lost";
+    return {cur, f, chance: Math.max(0, Math.min(1, result === "won" ? 1 : result === "lost" ? 0 : win)), result};
+  }
+
   const clearCache = () => cache.clear();
-  return {playerLive, liveChance, clearCache, findGame, espnTeam, norm, _remaining: remaining, _extract: extract, _rowsFor: rowsFor};
+  return {playerLive, liveChance, teamLive, teamChance, clearCache, findGame, espnTeam, norm, _remaining: remaining, _extract: extract, _rowsFor: rowsFor};
 })();

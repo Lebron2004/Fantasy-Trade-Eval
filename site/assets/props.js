@@ -577,26 +577,47 @@ function spark(hist){
   const pl = document.createElementNS(ns, "polyline"); pl.setAttribute("points", pts); pl.setAttribute("class", "spark-line");
   svg.append(mid, pl); return svg;
 }
+const legResult = l => l.unsupported ? l.manual : l.result;
+// what a winning ticket pays back; a bonus bet keeps only the winnings
+const payoutOf = b => b.stake && b.odds ? b.stake * ((b.odds > 0 ? 1 + b.odds / 100 : 1 + 100 / -b.odds) - (b.bonus ? 1 : 0)) : null;
+const MARKET_LABEL = {ml: "Moneyline", spread: "Spread", total: "Game total", teamtotal: "Team total"};
+const signed = v => (v > 0 ? "+" : "") + v;
+function legText(l){
+  if (l.unsupported) return l.text;
+  if (l.kind !== "team") return `${l.name} ${l.side} ${l.line} ${l.label}`;
+  if (l.market === "ml") return `${l.team.name} moneyline`;
+  if (l.market === "spread") return `${l.team.name} ${l.line ? signed(l.line) : "pick'em"}`;
+  if (l.market === "teamtotal") return `${l.team.name} team total ${l.side} ${l.line}`;
+  return `${l.team.nick}${l.opp ? " / " + l.opp.nick : ""} ${l.side} ${l.line}`;
+}
+function teamNow(l){
+  const L = l.live || {}, r = legResult(l);
+  const score = L.score && (L.state === "live" || L.state === "final") ? `${L.me || l.team.abbr} ${L.score[0]}–${L.score[1]} ${L.opp || ""}` : "";
+  if (r) return score || (r === "won" ? "hit" : r === "lost" ? "missed" : "push");
+  if (L.state === "live" && l.lc) return `${score}, ${L.detail || "live"}, ${pct(l.lc.chance)}`;
+  return `${pct(l.pre)} pre-game`;
+}
 function parlayRow(b){
   const live = b.live && b.live.state === "live", ch = b.lc ? b.lc.chance : b.pre;
-  const won = b.legs.filter(l => (l.unsupported ? l.manual : l.result) === "won").length;
+  const won = b.legs.filter(l => legResult(l) === "won").length;
   const legsUl = el("ul", {class:"plegs"});
   b.legs.forEach(l => {
-    const r = l.unsupported ? l.manual : l.result;
-    const icon = r === "won" ? "✓" : r === "lost" ? "✕" : l.live && l.live.state === "live" ? "●" : "○";
-    const now = l.unsupported ? `${pct(l.p)} (your estimate)` : l.lc && !r ? `${fmt1(l.lc.cur)} of ${l.line}, ${pct(l.lc.chance)}` : l.lc ? `${fmt1(l.lc.cur)}` : `${pct(l.pre)} pre-game`;
+    const r = legResult(l);
+    const icon = r === "won" ? "✓" : r === "lost" ? "✕" : r === "push" ? "=" : l.live && l.live.state === "live" ? "●" : "○";
+    const now = l.unsupported ? `${pct(l.p)} (your estimate)` : l.kind === "team" ? teamNow(l)
+      : l.lc && !r ? `${fmt1(l.lc.cur)} of ${l.line}, ${pct(l.lc.chance)}` : l.lc ? `${fmt1(l.lc.cur)}` : `${pct(l.pre)} pre-game`;
     const li = el("li", {class: r ? "r-" + r : ""}, el("span", {class:"ic", text:icon}),
-      el("span", {class:"pl-txt", text: l.unsupported ? l.text : `${l.name} ${l.side} ${l.line} ${l.label}`}), el("small", {text:now}));
+      el("span", {class:"pl-txt", text: legText(l)}), el("small", {text:now}));
     if (l.unsupported && !b.result) li.append(el("span", {class:"bar-row"},
       el("button", {class:"btn tiny", text:"Hit", onclick: () => { l.manual = "won"; updateParlay(b).then(() => { saveTracked(); renderTracker(); }); }}),
       el("button", {class:"btn tiny", text:"Miss", onclick: () => { l.manual = "lost"; updateParlay(b).then(() => { saveTracked(); renderTracker(); }); }})));
     legsUl.append(li);
   });
-  const payout = b.stake && b.odds ? b.stake * (b.odds > 0 ? 1 + b.odds / 100 : 1 + 100 / -b.odds) : null;
+  const payout = payoutOf(b);
   return el("li", {class:`trk parlay ${b.result ? "res-" + b.result : live ? "is-live" : ""}`},
     el("div", {class:"trk-main"},
-      el("div", {class:"trk-name"}, el("strong", {text:`${b.legs.length}-leg parlay`}), b.odds != null ? el("span", {class:"tag", text:(b.odds > 0 ? "+" : "") + b.odds}) : null,
-        payout ? el("span", {class:"split", text:`$${b.stake} to pay $${payout.toFixed(2)}`}) : null),
+      el("div", {class:"trk-name"}, el("strong", {text: b.legs.length === 1 ? "Single bet" : `${b.legs.length}-leg parlay`}), b.odds != null ? el("span", {class:"tag", text:(b.odds > 0 ? "+" : "") + b.odds}) : null,
+        payout ? el("span", {class:"split", text: b.bonus ? `$${b.stake} bonus bet to win $${payout.toFixed(2)}` : `$${b.stake} to pay $${payout.toFixed(2)}`}) : null),
       el("div", {class:"trk-status"}, live && !b.result ? el("span", {class:"dot"}) : null,
         b.result ? (b.result === "won" ? "Won" : "Lost") : `${won} of ${b.legs.length} legs in${live ? ", games live" : b.start ? ", first game " + startText(b) : ""}`),
       legsUl),
@@ -646,21 +667,33 @@ function renderTracker(){
 }
 async function updateParlay(b){
   if (b.result) return;
-  await Promise.all(b.legs.filter(l => !l.unsupported).map(updateBet));
-  const ps = b.legs.map(l => l.unsupported ? (l.manual === "won" ? 1 : l.manual === "lost" ? 0 : l.p)
-    : l.result === "won" ? 1 : l.result === "lost" ? 0 : l.lc ? l.lc.chance : l.pre);
+  await Promise.all(b.legs.filter(l => !l.unsupported).map(l => l.kind === "team" ? updateTeamLeg(l) : updateBet(l)));
+  const ps = b.legs.map(l => { const r = legResult(l); return r === "won" || r === "push" ? 1 : r === "lost" ? 0 : l.unsupported ? l.p : l.lc ? l.lc.chance : l.pre; });
   const chance = ps.reduce((a, v) => a * v, 1);
-  const lost = b.legs.some(l => (l.unsupported ? l.manual : l.result) === "lost");
-  const allWon = b.legs.every(l => (l.unsupported ? l.manual : l.result) === "won");
+  const lost = b.legs.some(l => legResult(l) === "lost");
+  const allWon = b.legs.every(l => legResult(l) === "won" || legResult(l) === "push") && b.legs.some(l => legResult(l) === "won");
   const was = b.result;
   b.lc = {chance}; b.result = lost ? "lost" : allWon ? "won" : null;
   const anyLive = b.legs.some(l => l.live && l.live.state === "live");
   if (anyLive || !b.hist.length || b.hist[b.hist.length - 1][1] !== chance){ b.hist.push([Date.now(), chance]); if (b.hist.length > 150) b.hist.splice(0, b.hist.length - 150); }
-  b.live = {state: anyLive ? "live" : b.legs.every(l => l.unsupported || (l.live && l.live.state === "final")) ? "final" : "pre"};
+  b.live = {state: anyLive ? "live" : b.legs.every(l => l.unsupported || legResult(l) || (l.live && l.live.state === "final")) ? "final" : "pre"};
   if (b.result && b.result !== was){
-    const msg = `Your ${b.legs.length}-leg parlay ${b.result === "won" ? "hit" : "missed"}${b.result === "won" && b.stake && b.odds ? `: $${(b.stake * (b.odds > 0 ? 1 + b.odds / 100 : 1 + 100 / -b.odds)).toFixed(2)}` : ""}.`;
+    const pay = payoutOf(b);
+    const msg = `Your ${b.legs.length === 1 ? "bet" : b.legs.length + "-leg parlay"} ${b.result === "won" ? "hit" : "missed"}${b.result === "won" && pay ? `: $${pay.toFixed(2)}` : ""}.`;
     toast(msg); try { if ("Notification" in window && Notification.permission === "granted") new Notification("Trade Scale", {body: msg}); } catch(e){}
   }
+}
+async function updateTeamLeg(l){
+  if (l.result && l.live && l.live.state === "final") return;
+  try {
+    const L = await LIVE.teamLive(l.sport, l.team);
+    if (L.state === "none" && l.result) return;      // yesterday's game is off today's scoreboard; keep how it ended
+    l.live = L;
+    if (L.state === "live" || L.state === "final"){
+      const ch = LIVE.teamChance(l, L);
+      l.lc = ch; l.result = ch.result;
+    }
+  } catch(e){ l.live = Object.assign(l.live || {}, {error: "Couldn't reach live scores"}); }
 }
 async function updateBet(b){
   if (b.result && b.live && b.live.state === "final") return;
@@ -747,8 +780,22 @@ function withPlayer(ctx, fn){
   sport = ctx.sport; index = ctx.index; defense = ctx.defense; player = ctx.player;
   try { return fn(); } finally { [sport, index, defense, player] = saved; }
 }
+// a typical two-way market carries about a 4.5% cut; take it out so the chance is the book's honest read
+const fairFromOdds = o => { const p = implied(o); return p == null ? null : Math.min(0.97, p / 1.045); };
+async function modelTeamLeg(leg){
+  leg.p = leg.mine != null ? leg.mine : leg.odds != null ? fairFromOdds(leg.odds) : null;
+  if (leg.start === undefined){
+    leg.start = null;
+    try {
+      const L = await LIVE.teamLive(leg.sport, leg.team);
+      if (L.state !== "none"){ leg.start = L.date || null; if (!leg.opp && L.opp) leg.opp = {abbr: L.opp, nick: L.opp, name: L.opp}; leg.gameKey = leg.sport + ":" + L.gameId; }
+    } catch(e){}
+  }
+  return leg;
+}
 async function modelLeg(leg){
   if (leg.unsupported) return leg;
+  if (leg.kind === "team") return modelTeamLeg(leg);
   try {
     const [sd, doc] = await Promise.all([loadSportData(leg.sport), loadPlayerDoc(leg.sport, leg.pid)]);
     const ctx = {sport: leg.sport, index: sd.index, defense: sd.defense, player: doc};
@@ -788,8 +835,8 @@ async function readSlipText(text){
   const r = SLIP.parse(text, idx);
   if (!r.legs.length){ slip.busy = ""; slip.msg = "Couldn't find any legs. Try pasting the text, or add legs below one at a time."; renderSlip(); return; }
   slip.legs.push(...r.legs);
-  if (r.odds != null) slip.odds = r.odds;
-  if (r.stake != null) slip.stake = r.stake;
+  if (r.odds != null){ slip.odds = r.odds; slip.oddsFrom = r.oddsFrom; }
+  if (r.stake != null){ slip.stake = r.stake; slip.bonus = r.bonus; }
   slip.busy = "Modeling each leg..."; renderSlip();
   await Promise.all(slip.legs.map(modelLeg));
   slip.busy = ""; slip.msg = ""; renderSlip();
@@ -842,7 +889,7 @@ function renderSlip(){
     return;
   }
   host.append(el("div", {class:"bar-row", style:"justify-content:space-between"}, el("h2", {text:"Check a bet slip", style:"margin:0"}),
-    el("button", {class:"btn", text:"Close", onclick: () => { slip = {open:false, legs:[], odds:null, stake:null, busy:"", idx: slip.idx}; renderSlip(); }})));
+    el("button", {class:"btn", text:"Close", onclick: () => { slip = {open:false, legs:[], odds:null, stake:null, bonus:false, busy:"", idx: slip.idx}; renderSlip(); }})));
 
   // inputs
   const file = el("input", {type:"file", accept:"image/*", "aria-label":"Bet slip screenshot", class:"file-in"});
@@ -867,10 +914,11 @@ function renderSlip(){
       pin.onchange = () => { const v = Number(pin.value); leg.p = v > 0 && v < 100 ? v / 100 : null; renderSlip(); };
       if (leg.p == null && leg.odds != null){ leg.p = implied(leg.odds); pin.value = Math.round(leg.p * 100); }
       ul.append(el("li", {class:"leg unsup"}, el("div", {}, el("strong", {text:leg.text}),
-        el("small", {text:"Team bets and unknown players can't be modeled. Enter your own chance" + (leg.odds != null ? " (filled in from the leg's odds)" : "") + ", or leave blank to skip it."})),
+        el("small", {text:"I couldn't tell which team or player this is. Enter your own chance" + (leg.odds != null ? " (filled in from the leg's odds)" : "") + ", or leave blank to skip it."})),
         el("label", {class:"field"}, "Chance", pin), rm));
       return;
     }
+    if (leg.kind === "team"){ ul.append(teamLegRow(leg, rm)); return; }
     const sel = el("select", {class:"inline", "aria-label":"Prop"});
     sel.append(el("option", {value:"", text:"Pick the prop..."}));
     (leg.props || []).forEach(([k, l]) => sel.append(el("option", {value:k, text:l, selected: k === leg.key ? "" : false})));
@@ -899,43 +947,84 @@ function renderSlip(){
   const skipped = slip.legs.length - modeled.length;
   const pAll = parlayChance(modeled);
   const oddsIn = el("input", {type:"text", inputmode:"numeric", class:"odds-in", value: slip.odds != null ? (slip.odds > 0 ? "+" + slip.odds : slip.odds) : "", placeholder:"+650", "aria-label":"Slip odds"});
-  oddsIn.onchange = () => { const n = Number(oddsIn.value); slip.odds = Math.abs(n) >= 100 ? n : null; renderSlip(); };
+  oddsIn.onchange = () => { const n = Number(oddsIn.value); slip.odds = Math.abs(n) >= 100 ? n : null; slip.oddsFrom = "you"; renderSlip(); };
   const book = slip.odds != null ? implied(slip.odds) : null;
   const games = {}; slip.legs.forEach(l => { if (l.gameKey) games[l.gameKey] = (games[l.gameKey] || 0) + 1; });
   const sameGame = Object.values(games).some(n => n > 1);
   const weakest = [...modeled].sort((a, b) => a.p - b.p)[0];
   const sum = el("div", {class:"verdict-row"},
     el("div", {class:"big"}, el("span", {class:"num", text: modeled.length ? pct(pAll) : "–"}),
-      el("span", {class:"cap", text:`model chance all ${modeled.length} leg${modeled.length === 1 ? "" : "s"} hit${skipped ? ` (${skipped} skipped)` : ""}`})),
+      el("span", {class:"cap", text:`${modeled.some(l => !l.kind && !l.unsupported) ? "model chance" : "chance"} all ${modeled.length} leg${modeled.length === 1 ? "" : "s"} hit${skipped ? ` (${skipped} skipped)` : ""}`})),
     el("div", {class:"facts"},
       el("div", {}, el("span", {class:"lbl", text:"Slip odds"}), oddsIn),
       book != null ? el("div", {}, el("span", {class:"lbl", text:"Book implies"}), el("strong", {text:pct(book)})) : null,
       book != null && modeled.length ? el("div", {}, el("span", {class:"lbl", text:"Edge"}), el("strong", {class: pAll - book >= 0.02 ? "pos" : pAll - book <= -0.02 ? "neg" : "", text:(pAll >= book ? "+" : "") + (Math.round((pAll - book) * 1000) / 10) + " pts"})) : null,
       el("div", {}, el("span", {class:"lbl", text:"Fair odds"}), el("strong", {text: modeled.length ? toAmerican(pAll) : "–"})),
-      slip.stake ? el("div", {}, el("span", {class:"lbl", text:"Stake"}), el("strong", {text:"$" + slip.stake})) : null));
+      slip.stake ? el("div", {}, el("span", {class:"lbl", text: slip.bonus ? "Bonus bet" : "Stake"}), el("strong", {text:"$" + slip.stake})) : null));
   host.append(sum);
   const notes = [];
-  if (weakest && modeled.length > 1) notes.push(`Weakest leg: ${weakest.name} ${weakest.side} ${weakest.line} ${weakest.label} at ${pct(weakest.p)}.`);
+  if (weakest && modeled.length > 1) notes.push(`Weakest leg: ${legText(weakest)} at ${pct(weakest.p)}.`);
+  if (slip.odds != null && slip.oddsFrom === "legs") notes.push("Slip odds are the legs' odds multiplied. If your book shows different odds for the whole slip, type them in.");
   if (sameGame) notes.push("Some legs are from the same game. Those tend to move together (a big passing day helps the QB and his receivers), so the real chance can be higher or lower than legs multiplied together, and books price same-game parlays with that in mind.");
   if (book != null && modeled.length) notes.push(pAll < book ? "The model thinks this slip is less likely than the book's price, which is normal for parlays: the book's cut compounds with every leg." : "The model rates this slip above the book's price.");
   notes.forEach(n => host.append(el("p", {class:"why", text:n})));
   host.append(el("div", {class:"actions", style:"justify-content:flex-start"},
     el("button", {class:"btn primary", text: slip.legs.length > 1 ? "Track this parlay" : "Track this bet", disabled: modeled.length ? false : "", onclick: trackSlip}),
-    el("button", {class:"btn", text:"Start over", onclick: () => { slip.legs = []; slip.odds = null; slip.stake = null; slip.msg = ""; renderSlip(); }})));
+    el("button", {class:"btn", text:"Start over", onclick: () => { slip.legs = []; slip.odds = null; slip.stake = null; slip.bonus = false; slip.msg = ""; renderSlip(); }})));
+}
+function teamLegRow(leg, rm){
+  const redo = async () => { await modelLeg(leg); renderSlip(); };
+  const mk = el("select", {class:"inline", "aria-label":"Bet type"});
+  Object.entries(MARKET_LABEL).forEach(([k, l]) => mk.append(el("option", {value:k, text:l, selected: k === leg.market ? "" : false})));
+  mk.onchange = () => { leg.market = mk.value; if (leg.market === "ml") leg.line = null; if (/total/.test(leg.market) && !leg.side) leg.side = "over"; redo(); };
+  const ctl = el("div", {class:"leg-ctl"}, mk);
+  if (leg.market !== "ml"){
+    const lin = el("input", {type:"number", step:"0.5", value: leg.line ?? "", class:"line-in sm", "aria-label":"Line", placeholder: leg.market === "spread" ? "-1.5" : "6.5"});
+    lin.onchange = () => { leg.line = lin.value === "" ? null : Number(lin.value); redo(); };
+    ctl.append(lin);
+  }
+  if (/total/.test(leg.market)) ctl.append(el("span", {class:"seg"}, ...["over","under"].map(sd => el("button", {text: sd === "over" ? "Over" : "Under", "aria-pressed": String(leg.side === sd),
+    onclick: () => { leg.side = sd; redo(); }}))));
+  const oddsIn = el("input", {type:"text", inputmode:"numeric", class:"odds-in", value: leg.odds != null ? signed(leg.odds) : "", placeholder:"odds", "aria-label":"Leg odds"});
+  oddsIn.onchange = () => { const n = Number(oddsIn.value); leg.odds = Math.abs(n) >= 100 ? n : null; leg.mine = null; redo(); };
+  const mine = el("input", {type:"number", min:1, max:99, class:"odds-in", placeholder:"%", value: leg.mine != null ? Math.round(leg.mine * 100) : "", "aria-label":"Your own chance for this leg"});
+  mine.onchange = () => { const v = Number(mine.value); leg.mine = mine.value !== "" && v > 0 && v < 100 ? v / 100 : null; redo(); };
+  ctl.append(oddsIn, mine);
+  // names more than one league uses ("Jets", "Kings"): let them switch if the guess was wrong
+  let sportPick = null;
+  if (leg.alts && leg.alts.length){
+    sportPick = el("select", {class:"inline", "aria-label":"League"});
+    [{sport: leg.sport, team: leg.team}, ...leg.alts].forEach((a, k) => sportPick.append(el("option", {value: k, text: `${sportLabel(a.sport)}: ${a.team.name}`})));
+    sportPick.onchange = () => {
+      const all = [{sport: leg.sport, team: leg.team}, ...leg.alts], pickd = all[Number(sportPick.value)];
+      leg.alts = all.filter(a => a !== pickd); leg.sport = pickd.sport; leg.team = pickd.team; leg.opp = null; leg.start = undefined; redo();
+    };
+    ctl.append(sportPick);
+  }
+  const where = leg.opp ? (leg.market === "total" ? ` ${leg.team.nick} vs ${leg.opp.nick}` : ` vs ${leg.opp.name}`) : "";
+  const from = leg.mine != null ? "your estimate" : leg.odds != null ? `from ${signed(leg.odds)}, minus the book's cut` : "add odds or your %";
+  return el("li", {class:"leg"},
+    el("div", {}, el("strong", {text: legText(leg)}), el("span", {class:"tag", text:sportLabel(leg.sport)}),
+      el("small", {text:`${where.trim()}${!leg.sure ? `${where ? ". " : ""}Check this one, I wasn't sure I read it right` : ""}`})),
+    ctl,
+    el("div", {class:"leg-p"}, el("span", {class:"num", text: leg.p != null ? pct(leg.p) : "–"}), el("small", {text: from})),
+    rm);
 }
 function trackSlip(){
   const legs = slip.legs.filter(l => l.p != null).map(l => l.unsupported
     ? {unsupported: true, text: l.text, p: l.p, pre: l.p, manual: null}
+    : l.kind === "team"
+    ? {kind: "team", sport: l.sport, market: l.market, team: l.team, opp: l.opp, line: l.line, side: l.side, odds: l.odds, pre: l.p, start: l.start}
     : {sport: l.sport, pid: l.pid, name: l.name, team: l.team, grp: l.grp, key: l.key, label: l.label, line: l.line, side: l.side,
        mu: l.mu, sd: l.sd, count: l.count, disp: l.disp, pre: l.p, outsMu: l.outsMu, start: l.start, opp: l.opp, hist: []});
   if (!legs.length) return;
-  const bet = legs.length === 1 && !legs[0].unsupported
+  const bet = legs.length === 1 && !legs[0].unsupported && legs[0].kind !== "team"
     ? {...legs[0], id: Date.now().toString(36), sport: legs[0].sport, odds: slip.odds, stake: slip.stake, added: new Date().toISOString()}
-    : {id: Date.now().toString(36), type: "parlay", legs, odds: slip.odds, stake: slip.stake, pre: parlayChance(legs.map(l => ({...l, p: l.pre}))),
+    : {id: Date.now().toString(36), type: "parlay", legs, odds: slip.odds, stake: slip.stake, bonus: !!slip.bonus, pre: parlayChance(legs.map(l => ({...l, p: l.pre}))),
        start: legs.map(l => l.start).filter(Boolean).sort()[0] || null, added: new Date().toISOString(), hist: []};
   tracked.unshift(bet); saveTracked(); renderTracker(); pollSoon(0);
-  toast(bet.type === "parlay" ? `Tracking your ${legs.length}-leg parlay.` : `Tracking ${bet.name}.`);
-  slip = {open:false, legs:[], odds:null, stake:null, busy:"", idx: slip.idx}; renderSlip();
+  toast(bet.type !== "parlay" ? `Tracking ${bet.name}.` : legs.length === 1 ? `Tracking ${legText(legs[0])}.` : `Tracking your ${legs.length}-leg parlay.`);
+  slip = {open:false, legs:[], odds:null, stake:null, bonus:false, busy:"", idx: slip.idx}; renderSlip();
   $("tracker").scrollIntoView({behavior:"smooth", block:"start"});
 }
 
