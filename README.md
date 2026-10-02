@@ -42,6 +42,15 @@ From then on it runs by itself every day at 11:00 UTC. To change the time, edit 
 
 Props data comes from [nflverse](https://github.com/nflverse) (CC-BY 4.0) with charting from FTN Data for football, [SportsDataverse](https://github.com/sportsdataverse) for basketball and hockey, and the MLB Stats API for baseball. Props data is rebuilt on every run and deployed with the site, but not stored in git, so the repo stays small. The one exception is `site/data/props/mlb/_cache.json`, which caches last season's baseball game logs. Man/zone coverage is published only after each season, so coverage splits use past seasons. True receiver-vs-cornerback matchups need paid tracking data and aren't included.
 
+## Model trade signals and player news
+
+Every morning, after the prop model trains, two more steps run:
+
+- **Buy low, sell high** (`scripts/trade_signals.py`): the trained model's next-game Over chances are turned into one fantasy projection per player (PPR for football; points, rebounds, assists, steals, blocks and turnovers for basketball; goals, assists, shots and blocks for hockey; bases, runs, RBIs, walks and steals for baseball hitters, outs and strikeouts for pitchers). Each player is ranked at his position by that projection and by trade value. When the model ranks him well above his trade value he's a **buy**; well below, a **sell**. Players ruled out, doubtful, or on IR get no signal, since the model doesn't know about injuries. Written to `data/signals.json`.
+- **Player news** (`scripts/update_news.py`): injury designation changes since yesterday (ruled out, placed on IR, back off the report), team changes, and ESPN's latest injury notes and headlines for every sport, matched to players. Kept for 10 days in `data/news.json`.
+
+On **My league** this adds a **News for your team** panel that says what to do about each item (bench him and who moves into your lineup, move him to IR, game-time call), a **Buy low, sell high** panel with one-click trades, and model chips on every player. Trade ideas are ranked partly by the model's lean, and each idea says when you're buying low or selling high. The **trade calculator** shows the model's view under each player, his latest news, whether the model leans toward your side of the deal, and a news feed for the sport. The AI GM gets all of it too.
+
 ## How player values work
 
 Every value (1–100) blends two things, and the **Value by** slider on both pages sets the mix:

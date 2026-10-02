@@ -112,6 +112,11 @@ function analyzeLeague(L){
   return {E, teams, useLeague, ranks, fullCount: full.length, powerOrder};
 }
 
+// The trained model's lean on a package: average buy/sell score of the players you get minus the ones you send.
+function modelEdge(give, get, sp){
+  const avg = list => { const g = list.map(p => TS.signalOf(p, sp)).filter(Boolean); return g.length ? g.reduce((a, x) => a + x.s, 0) / g.length : 0; };
+  return avg(get) - avg(give);
+}
 const pairs = arr => { const out = []; for (let i = 0; i < arr.length; i++) for (let j = i + 1; j < arr.length; j++) out.push([arr[i], arr[j]]); return out; };
 
 function tradeIdeas(A, me, only){
@@ -133,8 +138,9 @@ function tradeIdeas(A, me, only){
         const myGain = mine.total - base; if (myGain < 3) continue;
         const theirs = E.lineup(T.roster.filter(p => !getIds.has(p.id)).concat(give));
         const theirGain = theirs.total - tBase; if (theirGain < -4) continue;
-        found.push({team:T, give, get, myGain, theirGain, ratio, after: mine,
-                    score: myGain + 0.5 * Math.max(0, theirGain) + (theirGain >= 0 ? 3 : 0)});
+        const edge = modelEdge(give, get, E.sp);
+        found.push({team:T, give, get, myGain, theirGain, ratio, after: mine, edge,
+                    score: myGain + 0.5 * Math.max(0, theirGain) + (theirGain >= 0 ? 3 : 0) + 4 * edge});
       }
     }
   }
@@ -204,6 +210,7 @@ function gradeInfo(g){
 const pct = g => { const d = Math.round((g - 1) * 100); return d === 0 ? "league average" : `${Math.abs(d)}% ${d > 0 ? "above" : "below"} average`; };
 function playerLine(p, E, extra){
   const n = el("span", {class:"pl"}, p.name); const tg = injTag(p); if (tg) n.append(tg);
+  const st = TS.signalTag(p, E.sp); if (st) n.append(st);
   n.append(el("small", {text:` ${p.pos}, ${p.team || "FA"}, ${fmt(E.val(p))}${extra ? ", " + extra : ""}`}));
   return el("div", {}, n);
 }
@@ -303,6 +310,91 @@ function renderThisWeek(app, L, A, me){
   app.append(panel);
 }
 
+/* ---------- News for your team: what changed and what to do about it ---------- */
+const OUT_ALL = new Set([...OUT_NOW, "IL7", "IL10", "IL15", "IL60"]);
+function newsAdvice(i, p, A, me, L){
+  const {E} = A, lu = me.prof.lu, idx = lu.starters.findIndex(q => q && q.id === p.id), starting = idx >= 0;
+  const fill = () => {   // who takes his spot if he sits
+    const without = E.lineup(me.roster.filter(q => q.id !== p.id));
+    const inIds = new Set(lu.starters.filter(Boolean).map(q => q.id));
+    const sub = without.starters.find(q => q && !inIds.has(q.id));
+    return sub ? `${sub.name} moves into your lineup` : "you have nobody to fill his spot, so check the pickups below";
+  };
+  const status = i.kind === "injury" ? i.to : p.inj;
+  if (OUT_ALL.has(status)){
+    const ir = /^(IR|IL\d+|PUP)$/.test(status) ? " Move him to an IR spot if your league has one, which frees a roster spot for a pickup." : "";
+    return (starting ? `Bench him: ${fill()}.` : "He's already on your bench, so no lineup change.") + ir;
+  }
+  if (status === "Doubtful") return starting ? `Plan to sit him: ${fill()}.` : "Leave him on your bench.";
+  if (status === "Questionable" || status === "DTD") return starting ? `Game-time call. If he's ruled out, ${fill()}.` : "Keep an eye on it; he's on your bench either way.";
+  if (i.kind === "injury" && !i.to) return starting ? "Back in your lineup." : "Healthy again; see if he beats one of your starters.";
+  if (i.kind === "team") return `Recheck his role: his value is now ${fmt(E.val(p))}.`;
+  const g = TS.signalOf(p, L.sport);
+  if (g && g.sell) return "The trained model is lower on him than his value. A good time to shop him.";
+  if (g && g.buy) return "The trained model likes his next game. Keep him in your lineup.";
+  return "";
+}
+function renderTeamNews(app, L, A, me){
+  const cut = new Date(Date.now() - 7 * 864e5).toISOString();
+  const rows = me.roster.map(p => ({p, items: TS.newsFor(L.sport, p.id).filter(i => i.d >= cut)})).filter(r => r.items.length || (r.p.inj && OUT_ALL.has(r.p.inj)));
+  if (!rows.length) return;
+  const starterIds = new Set(me.prof.lu.starters.filter(Boolean).map(p => p.id));
+  const urgency = r => (TS.HURT.has(r.p.inj) ? 2 : r.p.inj ? 1 : 0) + (starterIds.has(r.p.id) ? 2 : 0);
+  rows.sort((a, b) => urgency(b) - urgency(a) || A.E.val(b.p) - A.E.val(a.p));
+  const panel = el("section", {class:"panel news-panel"}, el("h2", {text:"News for your team"}),
+    el("p", {class:"sub", text:"Injury changes, team changes, and the latest notes on your players from the past week, updated every morning, with what to do about each."}));
+  const ul = el("ul", {class:"news"});
+  rows.slice(0, 12).forEach(({p, items}) => {
+    const top = items[0] || {kind:"injury", to:p.inj, from:"", d:new Date().toISOString()};
+    const advice = newsAdvice(top, p, A, me, L);
+    const lvl = TS.HURT.has(p.inj) ? "bad" : p.inj ? "warn" : top.kind === "injury" && !top.to ? "good" : "";
+    const nm = el("div", {class:"nm"}, el("b", {text:p.name}), injTag(p) || "", TS.signalTag(p, L.sport) || "",
+      el("small", {text:` ${p.pos}, ${p.team || "FA"}${starterIds.has(p.id) ? ", starter" : ", bench"}`}));
+    const body = el("div", {class:"body"}, nm);
+    items.slice(0, 2).forEach(i => {
+      const t = TS.newsLine(i);
+      if (t) body.append(el("p", {class:"line"}, el("span", {class:"when", text:TS.newsWhen(i) + " "}), t,
+        i.url ? el("a", {href:i.url, target:"_blank", rel:"noopener", text:" Read"}) : ""));
+    });
+    if (advice) body.append(el("p", {class:"todo", text:advice}));
+    ul.append(el("li", {class:lvl}, body));
+  });
+  panel.append(ul);
+  app.append(panel);
+}
+
+/* ---------- Buy low, sell high: where the trained model disagrees with trade value ---------- */
+function renderBuySell(app, L, A, me){
+  const {E} = A, sp = L.sport;
+  if (!me.roster.some(p => TS.signalOf(p, sp)) && !E.pool.some(p => TS.signalOf(p, sp))) return;
+  const mine = new Set(me.roster.map(p => p.id));
+  const others = A.teams.filter(t => t.id !== me.id && t.roster.length);
+  const owner = new Map(); others.forEach(t => t.roster.forEach(p => owner.set(p.id, t)));
+  const sells = me.roster.filter(p => { const g = TS.signalOf(p, sp); return g && g.sell; })
+    .sort((a, b) => E.val(b) - E.val(a)).slice(0, 4);
+  const cap = Math.max(...me.roster.map(p => E.val(p)), 0) * 1.1;
+  const pool = others.length ? others.flatMap(t => t.roster) : E.pool.filter(p => !mine.has(p.id));
+  const need = new Set(me.needs);
+  const buys = pool.filter(p => { const g = TS.signalOf(p, sp); return g && g.buy && E.val(p) >= 10 && E.val(p) <= cap; })
+    .sort((a, b) => (need.has(E.groupOf(b)) - need.has(E.groupOf(a))) || TS.signalOf(b, sp).s * E.val(b) - TS.signalOf(a, sp).s * E.val(a)).slice(0, 6);
+  if (!sells.length && !buys.length) return;
+  const panel = el("section", {class:"panel"}, el("h2", {text:"Buy low, sell high"}),
+    el("p", {class:"sub", text:"Where the trained prop model disagrees with trade value. It predicts each player's next game from three seasons of game logs, his opponent, role, and rest, and ranks him at his position. A player it ranks well above his trade value is a buy; well below is a sell."}));
+  const row = (p, kind) => {
+    const g = TS.signalOf(p, sp), t = owner.get(p.id);
+    const btn = el("button", {class:"btn", text: kind === "sell" ? "Shop him" : "Build a trade",
+      onclick: () => kind === "sell" ? openInCalculator([p], []) : openInCalculator([], [p])});
+    return el("li", {}, el("span", {class:"slot " + (kind === "sell" ? "sig-sell" : "sig-buy"), text: kind === "sell" ? "Sell" : "Buy"}),
+      el("span", {class:"nm"}, p.name, injTag(p) || "", el("small", {text:` ${p.pos}, ${p.team || "FA"}${t ? `, on ${t.name}` : ""}, value ${fmt(E.val(p))}`}),
+        el("small", {class:"insight", text: TS.signalText(p, sp)})), btn);
+  };
+  const ul = el("ul", {class:"lu bs"});
+  sells.forEach(p => ul.append(row(p, "sell")));
+  buys.forEach(p => ul.append(row(p, "buy")));
+  panel.append(ul);
+  app.append(panel);
+}
+
 /* ---------- Defense vs position table (football) ---------- */
 let defenseData = null, defenseSort = "RB";
 async function renderDefense(app){
@@ -358,7 +450,7 @@ function leaguePrompt(L, A, me, q){
   }
   if (lastIdeas.length){
     out.push("", "TRADE IDEAS FROM THE APP'S MODEL:");
-    lastIdeas.slice(0, 6).forEach(f => out.push(`- Send ${f.give.map(p => p.name).join(" + ")} to ${f.team.name} for ${f.get.map(p => p.name).join(" + ")} (my lineup +${fmt(f.myGain)}, theirs ${f.theirGain >= 0 ? "+" : ""}${fmt(f.theirGain)})`));
+    lastIdeas.slice(0, 6).forEach(f => out.push(`- Send ${f.give.map(p => p.name).join(" + ")} to ${f.team.name} for ${f.get.map(p => p.name).join(" + ")} (my lineup +${fmt(f.myGain)}, theirs ${f.theirGain >= 0 ? "+" : ""}${fmt(f.theirGain)}${Math.abs(f.edge) >= 0.3 ? `, trained model ${f.edge > 0 ? "likes" : "is wary of"} it` : ""})`));
   }
   if (lastPickups){
     const pk = [...lastPickups.starts.map(s => `${s.p.name} (${s.p.pos}, would start at ${s.slot}, +${fmt(s.gain)})`), ...lastPickups.stash.map(s => `${s.p.name} (${s.p.pos}, depth)`)];
@@ -543,6 +635,7 @@ function renderAnalysis(app, L, A){
   }
   const them = view.compare ? A.teams.find(t => t.id === view.compare) : null;
 
+  renderTeamNews(app, L, A, me);
   const grid = el("div", {class:"lg-grid"});
   // Lineup
   const lu = el("section", {class:"panel"}, el("h2", {text:"Your best lineup"}),
@@ -640,6 +733,7 @@ function renderAnalysis(app, L, A){
       el("p", {class:"why", text:`Any of these would start for you at ${t.group}, your weakest spot, and they're valued close to ${t.chip.name}.`}))));
   }
   app.append(ti);
+  renderBuySell(app, L, A, me);
 
   // This week (football): start/sit using matchups, byes, and injury designations
   if (me.roster.some(p => p.x && p.x.nx)) renderThisWeek(app, L, A, me);
@@ -712,17 +806,30 @@ function ideaCard(f, me, E, L){
   const fills = [...new Set(f.give.map(p => E.groupOf(p)).filter(g => g && f.team.needs.includes(g)))];
   const theirWhy = fills.length ? ` It fills their ${fills.join(" and ")} need${fills.length > 1 ? "s" : ""}.` : f.theirGain >= 0 ? " Their lineup doesn't get worse." : " They lose a little lineup value, so expect some haggling.";
   const fairness = Math.round((f.ratio - 1) * 100);
+  // what the trained prop model says about each side, in its own sentences
+  const modelBits = [];
+  const say = (p, side) => {
+    const g = TS.signalOf(p, L.sport); if (!g) return;
+    const pr = `${g.proj} ${g.label}`;
+    if (side === "get" && g.buy) modelBits.push(`The trained model projects ${p.name} for ${pr} next game, more than his value suggests, so you're buying low.`);
+    if (side === "get" && g.sell) modelBits.push(`The trained model projects only ${pr} for ${p.name} next game, less than his value suggests.`);
+    if (side === "give" && g.sell) modelBits.push(`The trained model projects only ${pr} for ${p.name} next game, so you're selling high.`);
+    if (side === "give" && g.buy) modelBits.push(`The trained model likes ${p.name} (${pr} next game), so you may be selling low.`);
+  };
+  f.get.forEach(p => say(p, "get")); f.give.forEach(p => say(p, "give"));
+  const modelWhy = modelBits.length ? " " + modelBits.join(" ") : "";
   return el("div", {class:"idea"},
     el("div", {class:"deal"},
       el("div", {class:"give"}, el("h4", {text:"You send"}), ...f.give.map(p => playerLine(p, E))),
       el("span", {class:"arrow", text:"→"}),
       el("div", {class:"get"}, el("h4", {text:`From ${f.team.name}`}), ...f.get.map(p => playerLine(p, E)))),
-    el("p", {class:"why", text:(why ? why + "." : "") + theirWhy}),
+    el("p", {class:"why", text:(why ? why + "." : "") + theirWhy + modelWhy}),
     el("div", {class:"foot"},
       el("div", {class:"bar-row"},
         el("span", {class:"chip up", text:`Your lineup +${fmt(f.myGain)}`}),
         el("span", {class:`chip ${f.theirGain >= 0 ? "up" : "down"}`, text:`Theirs ${f.theirGain >= 0 ? "+" : ""}${fmt(f.theirGain)}`}),
-        el("span", {class:"chip", text: Math.abs(fairness) <= 5 ? "Even value" : fairness > 0 ? `You get ${fairness}% more value` : `You pay ${-fairness}% extra`})),
+        el("span", {class:"chip", text: Math.abs(fairness) <= 5 ? "Even value" : fairness > 0 ? `You get ${fairness}% more value` : `You pay ${-fairness}% extra`}),
+        f.edge >= 0.3 ? el("span", {class:"chip sig-buy", text:"Model likes it"}) : f.edge <= -0.3 ? el("span", {class:"chip sig-sell", text:"Model is wary"}) : null),
       el("button", {class:"btn", text:"Open in trade calculator", onclick: () => openInCalculator(f.give, f.get)})));
 }
 

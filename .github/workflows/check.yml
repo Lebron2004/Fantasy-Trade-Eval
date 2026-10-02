@@ -1,0 +1,23 @@
+name: Check
+
+on:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Scripts compile
+        run: python -m py_compile scripts/*.py
+
+      - name: Page scripts parse
+        run: for f in site/assets/*.js; do node --check "$f" || exit 1; done
+
+      - name: News feed reads ESPN (dry run, writes nothing)
+        run: python scripts/update_news.py --dry-run

@@ -42,9 +42,61 @@ const TS = (() => {
     });
     list.updated = d.updated;
     list.byId = new Map(list.map(p => [p.id, p]));
+    await Promise.all([loadSignals(sport), loadNews(sport)]);
     pools[sport] = list;
     return list;
   }
+
+  /* ---------- Trained-model signals and player news (both optional: the pages work without them) ---------- */
+  const signals = {}, news = {};
+  let signalFile = null, newsFile = null;
+  async function loadSignals(sport){
+    try { signalFile = signalFile || await getJSON("data/signals.json"); } catch(e){ signalFile = {sports:{}}; }
+    signals[sport] = (signalFile.sports || {})[sport] || null;
+  }
+  async function loadNews(sport){
+    try { newsFile = newsFile || await getJSON("data/news.json"); } catch(e){ newsFile = {items:[]}; }
+    const by = new Map();
+    (newsFile.items || []).filter(i => i.sport === sport).forEach(i => { if (!by.has(i.id)) by.set(i.id, []); by.get(i.id).push(i); });
+    by.forEach(l => l.sort((a, b) => b.d.localeCompare(a.d)));
+    by.all = (newsFile.items || []).filter(i => i.sport === sport).sort((a, b) => b.d.localeCompare(a.d));
+    news[sport] = by;
+  }
+  // What the trained prop model thinks of a player next to his trade value.
+  // s > 0: the model ranks him higher at his position than his trade value does (buy); s < 0: lower (sell).
+  function signalOf(p, sport){
+    const S = signals[sport], r = S && !p.custom && S.players[p.id];
+    if (!r) return null;
+    const [proj, avg, mr, vr, n, s] = r;
+    return {proj, avg, mr, vr, n, s, label: S.label.split(" (")[0], buy: s >= 0.4, sell: s <= -0.4};
+  }
+  function signalText(p, sport){
+    const g = signalOf(p, sport); if (!g) return "";
+    const pos = sport === "nfl" ? p.pos + "s" : "players at his position";
+    return `The trained model projects ${g.proj} ${g.label} next game${g.avg != null ? ` (${g.avg} over his last 20 games)` : ""}: ` +
+      `${ordinalN(g.mr)} of ${g.n} ${pos} by the model, ${ordinalN(g.vr)} by trade value.`;
+  }
+  function signalTag(p, sport){
+    const g = signalOf(p, sport);
+    if (!g || !(g.buy || g.sell)) return null;
+    return el("span", {class:"mu sig " + (g.buy ? "sig-buy" : "sig-sell"), title: signalText(p, sport)}, g.buy ? "Model: buy" : "Model: sell");
+  }
+  const ordinalN = n => n + (["th","st","nd","rd"][(n % 100 - 20) % 10] || ["th","st","nd","rd"][n % 100] || "th");
+  const newsFor = (sport, id) => ((news[sport] && news[sport].get(String(id))) || []);
+  const allNews = sport => (news[sport] && news[sport].all) || [];
+  const HURT = new Set(["Out","IR","PUP","Sus","NA","IL7","IL10","IL15","IL60","Doubtful"]);
+  // One line saying what happened, in plain words.
+  function newsLine(i){
+    if (i.kind === "injury"){
+      if (!i.to) return `Off the injury report${i.from ? ` (was ${i.from})` : ""}.`;
+      const word = {IR:"placed on IR", PUP:"on the PUP list", Sus:"suspended", NA:"not active", DTD:"day-to-day", Out:"ruled out",
+                    IL7:"on the 7-day IL", IL10:"on the 10-day IL", IL15:"on the 15-day IL", IL60:"on the 60-day IL"}[i.to] || i.to.toLowerCase();
+      return `Now ${word}${i.from ? ` (was ${i.from})` : ""}.`;
+    }
+    if (i.kind === "team") return `Moved from ${i.from} to ${i.to}.`;
+    return i.text || "";
+  }
+  const newsWhen = i => new Date(i.d).toLocaleDateString(undefined, {month:"short", day:"numeric"});
 
   /* ---------- Valuation ---------- */
   function ageOf(born){
@@ -157,6 +209,10 @@ const TS = (() => {
     if (x.nx) parts.push(`next: ${x.nx}${x.mu != null ? ` (defense factor ${x.mu})` : ""}`);
     if (x.sos != null) parts.push(`rest-of-season schedule factor ${x.sos}`);
     if (x.gl != null) parts.push(`${x.gl} games left`);
+    const g = signalOf(p, sport);
+    if (g) parts.push(`trained model: ${g.proj} ${g.label} projected next game${g.avg != null ? ` vs ${g.avg} over his last 20 games` : ""}, ranked ${g.mr} of ${g.n} at his position by the model vs ${g.vr} by trade value`);
+    const nw = newsFor(sport, p.id)[0];
+    if (nw) parts.push(`latest news (${nw.d.slice(0, 10)}): ${newsLine(nw)}`);
     return parts.join(", ");
   }
 
@@ -253,5 +309,6 @@ const TS = (() => {
 
   return {SPORTS, sportName, store, settings, setSetting, onSettings, getJSON, norm, pools, loadSport,
           ageOf, adjusted, packageScore, el, injTag, metaText, splitText, toItem, settingsBar, makeSearch, ago,
-          matchupWord, matchupTag, insightText, aiLine, chanceTier, chanceClass};
+          matchupWord, matchupTag, insightText, aiLine, chanceTier, chanceClass,
+          signalOf, signalText, signalTag, newsFor, allNews, newsLine, newsWhen, HURT};
 })();
