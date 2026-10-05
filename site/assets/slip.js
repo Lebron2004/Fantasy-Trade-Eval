@@ -30,8 +30,17 @@ const SLIP = (() => {
       ["pitcher strikeouts","k"],["strikeouts thrown","k"],["outs recorded","outs"],["pitching outs","outs"],["earned runs allowed","er"],
       ["hits allowed","ha"],["walks allowed","bba"],["pitch count","pc"],
       ["to hit a home run","hr"],["home runs","hr"],["home run","hr"],["total bases","tb"],["rbis","rbi"],["rbi","rbi"],["runs scored","r"],["runs","r"],
-      ["stolen bases","sb"],["walks","bb"],["hits","h"],["strikeouts","k"]]
+      ["stolen bases","sb"],["walks","bb"],["hits","h"],["strikeouts","k"]],
+    ufc: [
+      ["fight goes the distance","dist"],["fight to go the distance","dist"],["goes the distance","dist"],["go the distance","dist"],["to go the distance","dist"],
+      ["by ko/tko","ko"],["by ko tko","ko"],["by tko/ko","ko"],["by ko","ko"],["by tko","ko"],["ko/tko","ko"],["by knockout","ko"],
+      ["by submission","sub"],["by sub","sub"],["by decision","dec"],["by points","dec"],
+      ["significant strikes landed","sig"],["significant strikes","sig"],["sig strikes","sig"],["sig. strikes","sig"],
+      ["takedowns landed","tdl"],["takedowns","tdl"],["knockdowns","kd"],["total rounds","rnd"],["rounds","rnd"],
+      ["moneyline","win"],["to win the fight","win"],["to win","win"],["fight winner","win"],["winner","win"]]
   };
+  MARKETS.cfb = MARKETS.nfl.filter(([, k]) => k !== "tgt" && k !== "ppr");   // no targets or fantasy points in college data
+  MARKETS.cbb = MARKETS.nba;
   // teams per sport: ESPN code | nickname(s) | city(s) | other codes books use
   const TEAMS = {
     nhl: `ANA|Ducks|Anaheim|ANH
@@ -387,13 +396,14 @@ WSH|Nationals/Nats|Washington|WSN/WAS`
           const ctx = lines.slice(i, end).join(" ");
           for (const c of h.cands){
             const key = findMarket(ctx, c.sport, c.grp);
-            const ln = findLine(ctx) || (key && /^(td|g|hr)$/.test(key) ? {side:"over", line:0.5} : null);
+            const ln = findLine(ctx) || (key && /^(td|g|hr)$/.test(key) || c.sport === "ufc" && /^(win|ko|sub|dec|dist)$/.test(key) ? {side:"over", line:0.5} : null);
             const score = (key ? 2 : 0) + (ln ? 1 : 0);
             if (!best || score > best.score) best = {c, key, ln, ctx, end, score};
           }
           if (best && best.score === 3) break;
         }
-        const {c, key, ln, ctx, end} = best;
+        let {c, key, ln, ctx, end} = best;
+        if (c.sport === "ufc" && !key){ key = "win"; ln = ln || {side:"over", line:0.5}; }   // "Fighter -250" is a bet on him to win
         const om = ctx.match(ODDS);
         for (let j = i; j < end; j++) used.add(j);
         legs.push({sport: c.sport, pid: c.pid, name: c.name, team: c.team, grp: c.grp, key, line: ln ? ln.line : null,

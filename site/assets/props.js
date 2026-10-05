@@ -1,8 +1,10 @@
-/* Props page (NFL): hit-rate history, situational and scheme splits, and a transparent projection. */
+/* Props page (NFL, NBA, NHL, MLB, college football and basketball, UFC): hit-rate history, situational and scheme
+   splits, and a transparent projection. */
 (() => {
 const {el, norm, getJSON, store, chanceClass} = TS;
 const $ = id => document.getElementById(id);
-const SPORTS = [["nfl","Football"],["nba","Basketball"],["nhl","Hockey"],["mlb","Baseball"]];
+const SPORTS = [["nfl","Football"],["nba","Basketball"],["nhl","Hockey"],["mlb","Baseball"],["cfb","College FB"],["cbb","College BB"],["ufc","UFC"]];
+const FOOTBALL = ["nfl","cfb"];
 const CFG = {
   nfl: {
     props: {
@@ -44,15 +46,61 @@ const CFG = {
     cv: {outs:.22, pc:.14},
     disp: {tb:1.9, "h+r+rbi":1.5, rbi:1.4, r:1.2, er:1.4, ha:1.2, k:1.15},
     groups: {H:"hitters", SP:"starting pitchers", RP:"relievers"}, defKeys: {H:["h","tb","hr","rbi"], SP:["k","outs","er","ha"], RP:["k","outs","ha"]},
-    search: "Search any MLB player or team", rest: null}
+    search: "Search any MLB player or team", rest: null},
+  cfb: {
+    props: {
+      QB: [["pyd","Passing yards"],["ptd","Passing TDs"],["cmp","Completions"],["att","Pass attempts"],["int","Interceptions"],
+           ["ruyd","Rushing yards"],["pyd+ruyd","Pass + rush yards"],["td","Anytime TD"]],
+      RB: [["ruyd","Rushing yards"],["car","Carries"],["ruyd+reyd","Rush + rec yards"],["rec","Receptions"],["reyd","Receiving yards"],["td","Anytime TD"]],
+      WR: [["reyd","Receiving yards"],["rec","Receptions"],["ruyd+reyd","Rush + rec yards"],["td","Anytime TD"]],
+      TE: [["reyd","Receiving yards"],["rec","Receptions"],["td","Anytime TD"]]},
+    label: {pyd:"pass yds", ptd:"pass TDs", cmp:"completions", att:"attempts", int:"INTs", car:"carries", ruyd:"rush yds", rutd:"rush TDs",
+            rec:"receptions", reyd:"rec yds", retd:"rec TDs", td:"TDs"},
+    count: ["ptd","int","td","rutd","retd","rec"],
+    cv: {pyd:.35, att:.22, cmp:.26, ruyd:.55, reyd:.65, rec:.45, car:.32},
+    groups: {QB:"QBs", RB:"RBs", WR:"WRs", TE:"TEs"}, defKeys: {QB:["pyd","ptd","int","ruyd"], RB:["ruyd","rutd","rec","reyd"], WR:["rec","reyd","retd"], TE:["rec","reyd","retd"]},
+    search: "Search any college football player or team", rest: null},
+  cbb: {
+    props: null,
+    label: {pts:"pts", reb:"reb", ast:"ast", fg3:"threes", stl:"steals", blk:"blocks", tov:"turnovers", min:"minutes"},
+    count: ["fg3","stl","blk","tov"],
+    cv: {pts:.36, reb:.42, ast:.5, min:.2, "pts+reb+ast":.3, "pts+reb":.32, "pts+ast":.33, "reb+ast":.38},
+    groups: {G:"guards", F:"forwards", C:"centers"}, defKeys: {G:["pts","ast","fg3","reb"], F:["pts","reb","ast","fg3"], C:["pts","reb","blk","ast"]},
+    search: "Search any college basketball player or team", rest: null},
+  // a fighter is his own "team"; his opponent is the matchup, and "defense" is what an opponent gives up per fight
+  ufc: {
+    props: null,
+    all: [["win","To win the fight"],["ko","Wins by KO/TKO"],["sub","Wins by submission"],["dec","Wins by decision"],["dist","Fight goes the distance"],
+          ["rnd","Total rounds"],["sig","Significant strikes"],["tdl","Takedowns"],["kd","Knockdowns"]],
+    label: {win:"wins", ko:"KO/TKO wins", sub:"submission wins", dec:"decision wins", dist:"fights to the distance", rnd:"rounds",
+            sig:"sig. strikes", str:"total strikes", tdl:"takedowns", kd:"knockdowns", ctrl:"control minutes"},
+    count: ["win","ko","sub","dec","dist","tdl","kd"],
+    binary: ["win","ko","sub","dec","dist"],
+    yesNo: {win:["Wins the fight","Doesn't win"], ko:["Wins by KO/TKO","No KO/TKO win"], sub:["Wins by submission","No submission win"],
+            dec:["Wins by decision","No decision win"], dist:["Goes the distance","Doesn't go the distance"]},
+    cv: {sig:.6, rnd:.4}, disp: {tdl:1.8, kd:1.3}, maxLine: {rnd:2.5},
+    groups: {FLY:"flyweights", BW:"bantamweights", FW:"featherweights", LW:"lightweights", WW:"welterweights", MW:"middleweights",
+             LHW:"light heavyweights", HW:"heavyweights", WSW:"strawweights", WFLY:"flyweights", WBW:"bantamweights", WFW:"featherweights"},
+    defKeys: null, defLabel: {sig:"sig. strikes absorbed", tdl:"takedowns allowed", kd:"knockdowns suffered", win:"opponents' win rate"},
+    search: "Search any UFC fighter", rest: null}
 };
 CFG.nba.props = {G: CFG.nba.all, F: CFG.nba.all, C: CFG.nba.all};
+CFG.cbb.props = CFG.nba.props;
+CFG.ufc.props = Object.fromEntries(Object.keys(CFG.ufc.groups).map(g => [g, CFG.ufc.all]));
+CFG.ufc.defKeys = Object.fromEntries(Object.keys(CFG.ufc.groups).map(g => [g, ["sig","tdl","kd","win"]]));
 let sport = "nfl";
 const C = () => CFG[sport];
 const BASE = () => `data/props/${sport}/`;
 const grpOf = p => p.grp || p.pos;
 const labelOf = key => key === "td" ? "TDs" : key.split("+").map(k => C().label[k] || k).join(" + ");
 const isCount = key => key.split("+").every(k => C().count.includes(k)) || key === "td";
+const isBinary = key => (C().binary || []).includes(key);   // yes/no props (a UFC win): 1 with chance mu, else 0
+// how a pick reads: "Over 24.5 pts", or for a yes/no prop "Wins by KO/TKO"
+function sideText(key, line, side){
+  const yn = (C().yesNo || {})[key];
+  if (yn && line < 1) return yn[side === "over" ? 0 : 1];
+  return `${side === "over" ? "Over" : "Under"} ${line} ${labelOf(key)}`;
+}
 const components = key => key === "td" ? ["rutd","retd"] : key.split("+");
 
 /* ---------- State ---------- */
@@ -77,7 +125,8 @@ function erf(x){ // Abramowitz-Stegun 7.1.26
 }
 const Phi = z => 0.5 * (1 + erf(z / Math.SQRT2));
 function poissonCdf(k, mu){ if (k < 0) return 0; let term = Math.exp(-mu), s = term; for (let i = 1; i <= k; i++){ term *= mu / i; s += term; } return Math.min(1, s); }
-function probOver(mu, sd, line, count, disp = 1){
+function probOver(mu, sd, line, count, disp = 1, binary = false){
+  if (binary){ const p = line < 1 ? Math.min(0.95, Math.max(0.05, mu)) : 0; return {over:p, push:0, under:1 - p}; }
   if (count){ const k = Math.floor(line); const pOver = 1 - countCdf(k, mu, disp); const pPush = Number.isInteger(line) ? countCdf(k, mu, disp) - countCdf(k - 1, mu, disp) : 0; return {over:pOver, push:pPush, under:1 - pOver - pPush}; }
   const hi = Math.floor(line) + 0.5, lo = Math.ceil(line) - 0.5;    // continuity correction for whole-number stats
   const over = 1 - Phi((hi - mu) / sd), under = Phi((lo - mu) / sd);
@@ -86,7 +135,7 @@ function probOver(mu, sd, line, count, disp = 1){
 /* ---------- Trained model ---------- */
 // scripts/train_props_model.py writes, into each player's file, the trained model's chance of the Over for his next
 // game at a grid of half-point lines ("ml"). It's used wherever the line falls inside that grid; otherwise the formula.
-const FLOAT_STATS = {nfl:["ppr"], nba:["min"], nhl:["toi"], mlb:[]};
+const FLOAT_STATS = {nfl:["ppr"], nba:["min"], nhl:["toi"], mlb:[], cfb:[], cbb:["min"], ufc:["rnd"]};
 function mlChance(doc, key, line, sp = sport){
   const m = doc && doc.ml && doc.ml[key]; if (!m || !m.l || !m.l.length) return null;
   const L = m.l, P = m.p;
@@ -103,13 +152,15 @@ function mlChance(doc, key, line, sp = sport){
 }
 // the chance used everywhere: trained model when it covers this line, formula otherwise
 function sideChance(doc, key, line, side, pr, sp = sport){
-  const ml = mlChance(doc, key, line, sp), P = pr ? probOver(pr.mu, pr.sd, line, pr.count, pr.disp) : null;
+  const ml = mlChance(doc, key, line, sp), P = pr ? probOver(pr.mu, pr.sd, line, pr.count, pr.disp, pr.binary) : null;
   const pick = x => x ? (side === "over" ? x.over : x.under) : null;
   return {p: ml ? pick(ml) : pick(P), trained: !!ml, formula: pick(P), push: (ml || P || {push:0}).push};
 }
 const implied = o => { const n = Number(o); if (!n || Math.abs(n) < 100) return null; return n < 0 ? -n / (-n + 100) : 100 / (n + 100); };
 const toAmerican = p => p <= 0 || p >= 1 ? "–" : p >= 0.5 ? String(Math.round(-100 * p / (1 - p))) : "+" + Math.round(100 * (1 - p) / p);
 const pct = p => Math.round(p * 100) + "%";
+const vsAt = h => h === 0 ? "at" : "vs";    // neutral sites and fights have no home team
+const oppShort = o => sport === "ufc" ? String(o).replace(/\s*\(.*\)$/, "").split(" ").slice(-1)[0] : o;
 const signPct = f => { const d = Math.round((f - 1) * 100); return (d > 0 ? "+" : "") + d + "%"; };
 const fmt1 = v => (Math.round(v * 10) / 10).toString();
 const median = a => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : 0; };
@@ -132,10 +183,10 @@ function hitRate(list, key, line, side){
   return {h, n:list.length, p, rate: h / Math.max(1, list.length - p)};
 }
 function defaultLine(key){
-  if (key === "td") return 0.5;
+  if (key === "td" || isBinary(key)) return 0.5;
   const sample = games().slice(-10).map(x => statOf(x, key));   // last 10 games, across seasons if needed
-  const m = median(sample);
-  return Math.max(0.5, Math.floor(m) + 0.5);
+  const m = median(sample), cap = (C().maxLine || {})[key];
+  return Math.min(cap ?? Infinity, Math.max(0.5, Math.floor(m) + 0.5));
 }
 
 /* ---------- Projection ---------- */
@@ -150,7 +201,7 @@ function project(key){
     let fOpp = 1;
     if (opp && opp.pos[pos] && lg.pos[pos] && lg.pos[pos][c]){
       const raw = (opp.pos[pos].allow[c] ?? lg.pos[pos][c]) / lg.pos[pos][c];
-      const [damp, cap] = {nfl:[0.6, 0.3], nba:[0.4, 0.15], nhl:[0.5, 0.2], mlb:[0.5, 0.2]}[sport];   // trust in position-level defense data
+      const [damp, cap] = {nfl:[0.6, 0.3], nba:[0.4, 0.15], nhl:[0.5, 0.2], mlb:[0.5, 0.2], cfb:[0.6, 0.3], cbb:[0.4, 0.15], ufc:[0.5, 0.25]}[sport];   // trust in position-level defense data
       fOpp = Math.min(1 + cap, Math.max(1 - cap, 1 + (raw - 1) * damp));
     }
     // scheme: his splits weighted by how often this defense does each thing
@@ -200,7 +251,7 @@ function project(key){
   // counts: how much more spread his games have than a pure Poisson, shrunk toward what's typical for the stat
   const dEmp = mean > 0 ? varEmp / mean : 1, d0 = (C().disp || {})[key] || 1.15;
   const disp = Math.max(1, (n * dEmp + 10 * d0) / (n + 10));
-  return {mu0, mu1, mu2, mu, sd, parts, count: isCount(key), disp};
+  return {mu0, mu1, mu2, mu, sd, parts, count: isCount(key), disp, binary: isBinary(key)};
 }
 
 /* ---------- Rendering ---------- */
@@ -217,7 +268,7 @@ function renderPicker(){
     const q = norm(input.value.trim()); if (!q){ close(); return; }
     opts = index.players.filter(p => norm(p[1]).includes(q) || (q.length <= 3 && norm(p[2]) === q)).slice(0, 8);
     ul.innerHTML = "";
-    opts.forEach((p, i) => { const li = el("li", {role:"option", id:`pr-${i}`}, el("span", {text:p[1]}), el("span", {class:"meta", text:`${p[3]}, ${p[2]}`})); li.onmousedown = e => { e.preventDefault(); input.value = ""; close(); openPlayer(p[0]); }; ul.append(li); });
+    opts.forEach((p, i) => { const li = el("li", {role:"option", id:`pr-${i}`}, el("span", {text:p[1]}), el("span", {class:"meta", text: sport === "ufc" ? p[3] : `${p[3]}, ${p[2]}`})); li.onmousedown = e => { e.preventDefault(); input.value = ""; close(); openPlayer(p[0]); }; ul.append(li); });
     if (!opts.length){ close(); return; }
     active = 0; mark(); ul.hidden = false; input.setAttribute("aria-expanded","true");
   };
@@ -243,7 +294,7 @@ const chancePill = (p, legs = 1) => el("span", {class:`chance ${tier(p, legs)}`,
 let bestDate = null;
 const slateName = b => !/^\d{4}-/.test(b.slate || "") ? (b.slate || "the next slate") : b.slate === bestDate ? "today"
   : new Date(b.slate + "T12:00:00").toLocaleDateString(undefined, {weekday:"long", month:"short", day:"numeric"});
-function pickText(c, sp = sport){ return `${c.side === "over" ? "Over" : "Under"} ${c.line} ${withSport(sp, () => labelOf(c.key))}`; }
+function pickText(c, sp = sport){ return withSport(sp, () => sideText(c.key, c.line, c.side)); }
 function withSport(sp, fn){ const saved = sport; sport = sp; try { return fn(); } finally { sport = saved; } }
 function openPick(c){
   ui.stat = c.key; ui.line = c.line; ui.side = c.side; ui.oddsO = ""; ui.oddsU = "";
@@ -259,7 +310,12 @@ function bestPanel(b, sp){
   const box = el("section", {class:"panel best"});
   box.append(el("h2", {text:`Best bets for ${slateName(b)}`}));
   if (!b.picks.length){ box.append(el("p", {class:"empty", style:"margin:0", text: b.note || "No picks for this slate yet."})); return box; }
-  box.append(el("p", {class:"sub", text:`The trained model's most likely props across ${b.games} game${b.games === 1 ? "" : "s"}, each at the line nearest his average over his last 10 games, since real sportsbook lines aren't in the free data. Your book's line may differ, so tap a pick to check it at that line. Rebuilt every morning with the latest results and injury tags; injured players are left out.`}));
+  const unit = sp === "ufc" ? "fight" : "game";
+  const basis = sp === "ufc" ? "his last 10 fights" : sp === "cfb" || sp === "cbb" ? "this season's games (his last 10 until he has 3)" : "his last 10 games";
+  const fresh = sp === "ufc" ? "Rebuilt every morning with the latest results and the next card."
+    : sp === "cfb" || sp === "cbb" ? "Rebuilt every morning with the latest results; players who sat out their team's last game are left out, since college injury reports aren't in the free data."
+    : "Rebuilt every morning with the latest results and injury tags; injured players are left out.";
+  box.append(el("p", {class:"sub", text:`The trained model's most likely props across ${b.games} ${unit}${b.games === 1 ? "" : "s"}, each at the line nearest his average over ${basis}, since real sportsbook lines aren't in the free data. Your book's line may differ, so tap a pick to check it at that line. ${fresh}`}));
   const byId = new Map([...b.picks, ...(b.extra || [])].map(c => [c.pid + ":" + c.key, c]));
   if (b.parlays.length){
     box.append(el("h3", {text:"3-leg parlays"}));
@@ -270,8 +326,8 @@ function bestPanel(b, sp){
         el("div", {class:"parlay-top"}, el("strong", {text: i === 0 ? "Best parlay" : `Parlay ${i + 1}`}), chancePill(pl.p, legs.length)),
         el("ul", {}, ...legs.map(c => el("li", {},
           el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}),
-          el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:` ${c.home ? "vs" : "at"} ${c.opp}, ${pct(c.p)}`})))),
-        el("div", {class:"parlay-foot"}, el("small", {text:`Fair odds ${toAmerican(pl.p)}. One leg per game, so the legs don't lean on each other.`}),
+          el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:` ${vsAt(c.home)} ${c.opp}, ${pct(c.p)}`})))),
+        el("div", {class:"parlay-foot"}, el("small", {text:`Fair odds ${toAmerican(pl.p)}. One leg per ${sp === "ufc" ? "fight" : "game"}, so the legs don't lean on each other.`}),
           el("button", {class:"btn tiny", text:"Check in slip", onclick: () => checkParlay(legs, sp)})));
       grid.append(card);
     });
@@ -283,9 +339,9 @@ function bestPanel(b, sp){
       const why = (c.why || []).map(w => w[0].toLowerCase()).join(" and ");
       ul.append(el("li", {class:"pick"},
         chancePill(c.p),
-        el("div", {}, el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}), el("span", {class:"tag", text:c.team}),
+        el("div", {}, el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}), sp === "ufc" ? null : el("span", {class:"tag", text:c.team}),
           el("div", {class:"pick-line", text:pickText(c, sp)}),
-          el("small", {text:`${c.home ? "vs" : "at"} ${c.opp}, ${shortDate(c.date)}. Hit ${c.l10[0]} of his last ${c.l10[1]}.${why ? ` Helped most by ${why}.` : ""}`}))));
+          el("small", {text:`${vsAt(c.home)} ${c.opp}, ${shortDate(c.date)}. Hit ${c.l10[0]} of his last ${c.l10[1]}.${why ? ` Helped most by ${why}.` : ""}`}))));
     });
     return ul;
   };
@@ -308,13 +364,22 @@ async function renderBest(host, sp){
 function renderLanding(){
   const app = $("app"); app.innerHTML = "";
   const bestHost = el("div"); app.append(bestHost); renderBest(bestHost, sport);
-  const box = el("section", {class:"panel"}, el("h2", {text:"Popular this week"}),
-    el("p", {class:"sub", text:"The most productive players this season. Pick one, or search above for anyone."}));
+  // UFC: the fighters on the next card, in bout order; everyone else: the season's most productive players
+  const card = sport === "ufc" ? cardOrder() : null;
+  const box = el("section", {class:"panel"}, el("h2", {text: card ? "On the next card" : "Popular this week"}),
+    el("p", {class:"sub", text: card ? "Pick a fighter, or search above for anyone with a recent UFC fight." : "The most productive players this season. Pick one, or search above for anyone."}));
   const grid = el("div", {class:"chips"});
-  index.players.slice(0, 30).forEach(p => grid.append(el("button", {class:"pchip", onclick: () => openPlayer(p[0])},
-    el("strong", {text:p[1]}), el("small", {text:`${p[3]}, ${p[2]}`}))));
+  (card || index.players.slice(0, 30)).forEach(p => grid.append(el("button", {class:"pchip", onclick: () => openPlayer(p[0])},
+    el("strong", {text:p[1]}), el("small", {text: card ? `vs ${index.next[p[2]].opp}` : `${p[3]}, ${p[2]}`}))));
   box.append(grid);
   app.append(box);
+}
+
+function cardOrder(){
+  const on = index.players.filter(p => index.next[p[2]]);
+  if (!on.length) return null;
+  const when = p => index.next[p[2]].date + (index.next[p[2]].time || ""), bout = p => [p[2], index.next[p[2]].opp].sort().join("|");
+  return on.sort((a, b) => when(a).localeCompare(when(b)) || bout(a).localeCompare(bout(b))).slice(0, 40);
 }
 
 async function openPlayer(id, fromHash){
@@ -352,7 +417,9 @@ function render(){
   } else who.append(initials);
   const nm = el("div", {}, el("h2", {text:player.name}));
   const inj = injuries && injuries.get(norm(player.name) + (sport === "nfl" ? "|" + player.team : ""));
-  const sub = el("p", {class:"sub", style:"margin:0", text:`${player.pos}, ${player.team}. ${all.length} games since ${all.length ? seasonName(all[0].s) : seasonName(season())}.`});
+  const sub = el("p", {class:"sub", style:"margin:0", text: sport === "ufc"
+    ? `${player.pos}. ${all.length} UFC fight${all.length === 1 ? "" : "s"} since ${all.length ? seasonName(all[0].s) : seasonName(season())}, ${all.filter(g => g.wn === 1).length}-${all.filter(g => g.wn === 0).length}.`
+    : `${player.pos}, ${player.team}. ${all.length} games since ${all.length ? seasonName(all[0].s) : seasonName(season())}.`});
   if (inj) sub.append(" ", el("span", {class:"inj", text:inj}));
   if ((sport === "nhl" && grpOf(player) === "G") || (sport === "mlb" && grpOf(player) === "SP"))
     sub.append(el("br"), el("small", {text:"Uses only games he started, and assumes he starts the next one. Confirm the starter before betting."}));
@@ -361,15 +428,18 @@ function render(){
   head.append(who);
   if (ng){
     const bits = [new Date(ng.date + "T12:00:00").toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric"})];
-    if (sport === "nfl") bits.push(ng.sp == null ? "no line yet" : ng.sp > 0 ? `favored by ${ng.sp}` : ng.sp < 0 ? `${-ng.sp}-point underdog` : "pick'em");
+    if (FOOTBALL.includes(sport)) bits.push(ng.sp == null ? "no line yet" : ng.sp > 0 ? `favored by ${ng.sp}` : ng.sp < 0 ? `${-ng.sp}-point underdog` : "pick'em");
+    if (ng.home == null && sport !== "ufc") bits.push("neutral site");
+    if (ng.event) bits.push(ng.event);
+    if (ng.sr) bits.push(`${ng.sr} rounds`);
     if (ng.t) bits.push(`total ${ng.t}`);
     if (ng.imp) bits.push(`team expected to score ${fmt1(ng.imp)}`);
     if (ng.rest === 0) bits.push("second night of a back-to-back");
     else if (ng.rest != null && ng.rest <= 4) bits.push(`${ng.rest} day${ng.rest === 1 ? "" : "s"} of rest`);
     if (ng.opp_sp) bits.push(`facing ${ng.opp_sp}`);
-    head.append(el("div", {class:"next"}, el("span", {class:"lbl", text: ng.week ? `Week ${ng.week}` : "Next game"}),
-      el("strong", {text:`${ng.home ? "vs" : "at"} ${ng.opp}`}), el("span", {text: bits.join(", ")})));
-  } else head.append(el("div", {class:"next"}, el("span", {text:"No upcoming game on the schedule."})));
+    head.append(el("div", {class:"next"}, el("span", {class:"lbl", text: ng.week ? `Week ${ng.week}` : sport === "ufc" ? "Next fight" : "Next game"}),
+      el("strong", {text:`${vsAt(ng.home)} ${ng.opp}`}), el("span", {text: bits.join(", ")})));
+  } else head.append(el("div", {class:"next"}, el("span", {text: sport === "ufc" ? "Not on an upcoming card yet." : "No upcoming game on the schedule."})));
   app.append(head);
   liveHost = el("div", {id:"live-card"});
   app.append(liveHost);
@@ -382,7 +452,7 @@ function render(){
   statSel.onchange = () => { ui.stat = statSel.value; ui.line = defaultLine(ui.stat); writeHash(); render(); };
   const lineIn = el("input", {type:"number", step:"0.5", min:"0", value:line, class:"line-in", "aria-label":"Line"});
   lineIn.onchange = () => { const v = Number(lineIn.value); if (!isNaN(v) && v >= 0){ ui.line = v; writeHash(); render(); } };
-  const sideSeg = el("span", {class:"seg"}, ...["over","under"].map(s => el("button", {text: s === "over" ? "Over" : "Under", "aria-pressed": String(side === s), onclick: () => { ui.side = s; writeHash(); render(); }})));
+  const sideSeg = el("span", {class:"seg"}, ...["over","under"].map(s => el("button", {text: isBinary(key) && line < 1 ? (s === "over" ? "Yes" : "No") : s === "over" ? "Over" : "Under", "aria-pressed": String(side === s), onclick: () => { ui.side = s; writeHash(); render(); }})));
   const oO = el("input", {type:"text", inputmode:"numeric", placeholder:"-110", value:ui.oddsO, class:"odds-in", "aria-label":"Over odds"});
   const oU = el("input", {type:"text", inputmode:"numeric", placeholder:"-110", value:ui.oddsU, class:"odds-in", "aria-label":"Under odds"});
   oO.onchange = () => { ui.oddsO = oO.value.trim(); render(); }; oU.onchange = () => { ui.oddsU = oU.value.trim(); render(); };
@@ -406,10 +476,11 @@ function render(){
     else if (side === "over" && ipO){ book = ipO; bookTxt = `Book implies ${pct(ipO)}`; }
     else if (side === "under" && ipU){ book = ipU; bookTxt = `Book implies ${pct(ipU)}`; }
     const big = el("div", {class:"big"}, el("span", {class:"num " + chanceClass(pSide), text:pct(pSide)}),
-      el("span", {class:"cap", text:`${ch.trained ? "trained model" : "model"} chance of ${side === "over" ? "Over" : "Under"} ${line} ${labelOf(key)}`}));
+      el("span", {class:"cap", text:`${ch.trained ? "trained model" : "model"} chance: ${sideText(key, line, side)}`}));
     verdict.append(big);
     const facts = el("div", {class:"facts"},
-      el("div", {}, el("span", {class:"lbl", text:"Projection"}), el("strong", {text: pr.count ? fmt1(pr.mu) : String(Math.round(pr.mu))}), el("small", {text: pr.count ? " expected" : ` ± ${Math.round(pr.sd)}`})),
+      pr.binary ? el("div", {}, el("span", {class:"lbl", text:"His rate"}), el("strong", {text:pct(Math.min(1, pr.mu))}), el("small", {text:" opponent-adjusted"}))
+        : el("div", {}, el("span", {class:"lbl", text:"Projection"}), el("strong", {text: pr.count ? fmt1(pr.mu) : String(Math.round(pr.mu))}), el("small", {text: pr.count ? " expected" : ` ± ${Math.round(pr.sd)}`})),
       el("div", {}, el("span", {class:"lbl", text:"Fair odds"}), el("strong", {text:toAmerican(pSide)})));
     if (ch.trained) facts.append(el("div", {}, el("span", {class:"lbl", text:"Formula"}), el("strong", {text:pct(ch.formula)}), el("small", {text:" hand-tuned weights"})));
     if (book != null){
@@ -457,7 +528,7 @@ function chartPanel(all, key, line, side){
   const panel = el("section", {class:"panel"});
   const ranges = [["5","Last 5"],["10","Last 10"],["20","Last 20"],["season",seasonName(season())],["all","All"]];
   const seg = el("span", {class:"seg"}, ...ranges.map(([v, l]) => el("button", {text:l, "aria-pressed": String(ui.range === v), onclick: () => { ui.range = v; render(); }})));
-  panel.append(el("div", {class:"bar-row", style:"justify-content:space-between"}, el("h2", {text:"Game by game"}), seg));
+  panel.append(el("div", {class:"bar-row", style:"justify-content:space-between"}, el("h2", {text: sport === "ufc" ? "Fight by fight" : "Game by game"}), seg));
   let list = ui.range === "5" ? all.slice(-5) : ui.range === "10" ? all.slice(-10) : ui.range === "20" ? all.slice(-20) : ui.range === "season" ? all.filter(g => g.s === season()) : all;
   if (!list.length){ panel.append(el("p", {class:"empty", text:"No games in this range."})); return panel; }
   const vals = list.map(g => statOf(g, key));
@@ -479,30 +550,32 @@ function chartPanel(all, key, line, side){
     rect.setAttribute("rx", 5); rect.setAttribute("class", "b-" + r); rect.setAttribute("tabindex", "0");
     const when = g.w ? `${seasonName(g.s)} week ${g.w}` : `${shortDate(g.d)}, ${String(g.d).slice(0, 4)}`;
     const result = g.ts != null ? `, ${g.ts > g.os ? "won" : g.ts < g.os ? "lost" : "tied"} ${g.ts}–${g.os}` : g.wn != null ? (g.wn ? ", won" : ", lost") : "";
-    const info = `${when}${g.post ? " (playoffs)" : ""}: ${g.h ? "vs" : "at"} ${g.o}${result}${g.sp != null ? `, ${g.sp > 0 ? "favored by " + g.sp : g.sp < 0 ? "underdog by " + (-g.sp) : "pick'em"}` : ""}${g.t ? `, total ${g.t}` : ""}${g.rs === 0 ? ", back-to-back" : ""}${g.st === 0 && sport === "nba" ? ", off the bench" : ""}${g.dr ? `, ${ordinal(g.dr)}-toughest matchup for ${grpName()}` : ""}. ${labelOf(key)}: ${fmt1(v)}. ${Object.entries(g.x).filter(([k]) => k !== "ppr").map(([k, val]) => `${val} ${C().label[k] || k}`).join(", ")}.`;
+    const info = `${when}${g.post ? (sport === "cfb" ? " (bowl or playoff)" : " (playoffs)") : ""}: ${vsAt(g.h)} ${g.o}${result}${g.sr === 5 ? ", 5 rounds" : ""}${g.ttl ? ", title fight" : ""}${g.sp != null ? `, ${g.sp > 0 ? "favored by " + g.sp : g.sp < 0 ? "underdog by " + (-g.sp) : "pick'em"}` : ""}${g.t ? `, total ${g.t}` : ""}${g.rs === 0 ? ", back-to-back" : ""}${g.st === 0 && (sport === "nba" || sport === "cbb") ? ", off the bench" : ""}${g.dr ? `, ${ordinal(g.dr)}-toughest matchup for ${grpName()}` : ""}. ${labelOf(key)}: ${fmt1(v)}. ${Object.entries(g.x).filter(([k]) => k !== "ppr").map(([k, val]) => `${val} ${C().label[k] || k}`).join(", ")}.`;
     const t = document.createElementNS(ns, "title"); t.textContent = info; rect.append(t);
     const pick = () => { detail.textContent = info; svg.querySelectorAll("rect").forEach(r2 => r2.classList.remove("sel")); rect.classList.add("sel"); };
     rect.addEventListener("click", pick); rect.addEventListener("focus", pick);
     svg.append(rect);
     const tv = document.createElementNS(ns, "text"); tv.setAttribute("x", x + bw / 2); tv.setAttribute("y", (H - bottom) - h - 6); tv.setAttribute("class", "tv"); tv.textContent = fmt1(v); svg.append(tv);
-    const tl = document.createElementNS(ns, "text"); tl.setAttribute("x", x + bw / 2); tl.setAttribute("y", H - bottom + 17); tl.setAttribute("class", "tl"); tl.textContent = (g.h ? "" : "@") + g.o; svg.append(tl);
+    const tl = document.createElementNS(ns, "text"); tl.setAttribute("x", x + bw / 2); tl.setAttribute("y", H - bottom + 17); tl.setAttribute("class", "tl"); tl.textContent = (g.h === 0 ? "@" : "") + oppShort(g.o); svg.append(tl);
     const tw = document.createElementNS(ns, "text"); tw.setAttribute("x", x + bw / 2); tw.setAttribute("y", H - bottom + 32); tw.setAttribute("class", "tw"); tw.textContent = g.w ? `W${g.w}${g.s !== season() ? " '" + String(g.s).slice(2) : ""}` : `${shortDate(g.d)}${String(g.d).slice(0, 4) !== String(new Date().getFullYear()) ? " '" + String(g.d).slice(2, 4) : ""}`; svg.append(tw);
   });
   const ly = y(line);
   const ln = document.createElementNS(ns, "line"); ln.setAttribute("x1", gut - 4); ln.setAttribute("x2", Math.max(W, 320)); ln.setAttribute("y1", ly); ln.setAttribute("y2", ly); ln.setAttribute("class", "ln"); svg.append(ln);
   const lt = document.createElementNS(ns, "text"); lt.setAttribute("x", gut - 8); lt.setAttribute("y", ly + 4); lt.setAttribute("text-anchor", "end"); lt.setAttribute("class", "lt"); lt.textContent = `${line}`; svg.append(lt);
   const r = hitRate(list, key, line, side);
-  panel.append(el("p", {class:"sub", text:`${side === "over" ? "Over" : "Under"} ${line} hit in ${r.h} of ${r.n - r.p} games (${pct(r.rate)})${r.p ? `, ${r.p} push${r.p > 1 ? "es" : ""}` : ""}. Average ${fmt1(vals.reduce((a, b) => a + b, 0) / vals.length)}, median ${fmt1(median(vals))}.`}),
+  panel.append(el("p", {class:"sub", text:`${sideText(key, line, side)} hit in ${r.h} of ${r.n - r.p} ${sport === "ufc" ? "fights" : "games"} (${pct(r.rate)})${r.p ? `, ${r.p} push${r.p > 1 ? "es" : ""}` : ""}. Average ${fmt1(vals.reduce((a, b) => a + b, 0) / vals.length)}, median ${fmt1(median(vals))}.`}),
     el("div", {class:"chartwrap"}, svg), detail);
   return panel;
 }
+const nowTag = () => FOOTBALL.includes(sport) ? "This week" : sport === "ufc" ? "Next fight" : "Next game";
 const ordinal = n => n + (["th","st","nd","rd"][(n % 100 - 20) % 10] || ["th","st","nd","rd"][n % 100] || "th");
 
 function whyPanel(pr, key, ng, opp){
   const panel = el("section", {class:"panel"}, el("h2", {text:"How the projection is built"}));
   const rows = [
-    ["Recent form", `Weighted average of his games, newest weighted most`, pr.mu0, null],
-    ["Opponent", ng ? `What ${ng.opp} allows to ${grpName()} vs league average` : "No game scheduled", pr.mu1, pr.mu0 ? pr.mu1 / pr.mu0 : 1],
+    ["Recent form", `Weighted average of his ${sport === "ufc" ? "fights" : "games"}, newest weighted most`, pr.mu0, null],
+    ["Opponent", ng ? (sport === "ufc" ? `What ${ng.opp}'s opponents have done against him vs the division average` : `What ${ng.opp} allows to ${grpName()} vs league average`)
+      : sport === "ufc" ? "No fight booked" : "No game scheduled", pr.mu1, pr.mu0 ? pr.mu1 / pr.mu0 : 1],
     sport === "nfl" ? ["Scheme fit", schemeNote(pr), pr.mu2, pr.mu1 ? pr.mu2 / pr.mu1 : 1] : null,
     sport === "nfl"
       ? ["Game script", ng && ng.imp ? `${player.team} ${ng.sp > 0 ? "favored by " + ng.sp : ng.sp < 0 ? "underdog by " + (-ng.sp) : "even"}, expected to score ${fmt1(ng.imp)} (league average ${fmt1(defense.avg_team_total)})` : "No betting line yet", pr.mu, pr.mu2 ? pr.mu / pr.mu2 : 1]
@@ -512,9 +585,11 @@ function whyPanel(pr, key, ng, opp){
   rows.forEach(([t, d, v, f]) => ul.append(el("li", {},
     el("div", {}, el("strong", {text:t}), el("small", {text:d})),
     f == null ? el("span", {class:"chip", text:"base"}) : el("span", {class:`chip ${f > 1.005 ? "up" : f < 0.995 ? "down" : ""}`, text:signPct(f)}),
-    el("span", {class:"v", text: pr.count ? fmt1(v) : String(Math.round(v))}))));
+    el("span", {class:"v", text: pr.binary ? pct(Math.min(1, v)) : pr.count ? fmt1(v) : String(Math.round(v))}))));
   const mlSec = trainedPanel(key);
-  panel.append(ul, el("p", {class:"why", style:"margin-top:10px", text: pr.count
+  panel.append(ul, el("p", {class:"why", style:"margin-top:10px", text: pr.binary
+    ? "This is a yes-or-no prop, so the chance is his own rate, adjusted for the opponent and kept between 5% and 95% so a short record can't make it a sure thing."
+    : pr.count
     ? `This stat is modeled as a count. His games swing ${pr.disp > 1.15 ? "more than a steady rate would explain, so the odds are spread wider to match" : "about as much as a steady rate would, so it's priced like one"}.`
     : `This stat uses a bell curve centered on the projection, with a spread of about ${fmt1(pr.sd)} based on how much his games actually swing.`}));
   if (mlSec) panel.append(...mlSec);
@@ -555,34 +630,37 @@ function schemeNote(pr){
 
 function splitsPanel(all, key, line, side, ng, opp){
   const panel = el("section", {class:"panel"}, el("h2", {text:"When the situation matches"}),
-    el("p", {class:"sub", text:`Every split from his game log. Rows marked "${sport === "nfl" ? "This week" : "Next game"}" match his next game.`}));
+    el("p", {class:"sub", text:`Every split from his ${sport === "ufc" ? "fight" : "game"} log. Rows marked "${nowTag()}" match his next ${sport === "ufc" ? "fight" : "game"}.`}));
   const G = grpOf(player), oppRank = ng && opp && opp.pos[G] ? opp.pos[G].rank : null;
   const nTeams = Object.keys(defense.teams).length || 30, bottom = nTeams - 9;
   const won = g => g.ts != null ? g.ts > g.os : g.wn === 1, lost = g => g.ts != null ? g.ts < g.os : g.wn === 0;
+  const [big, hiT, loT] = sport === "cfb" ? [14, 60, 48] : [6, 47, 43];   // college lines and totals run bigger
   const S = [
     ["Home", g => g.h === 1, ng && ng.home === 1], ["Away", g => g.h === 0, ng && ng.home === 0],
     ["Favored", g => g.sp > 0, ng && ng.sp > 0], ["Underdog", g => g.sp < 0, ng && ng.sp < 0],
-    ["Big favorite (6+)", g => g.sp >= 6, ng && ng.sp >= 6], ["Big underdog (6+)", g => g.sp <= -6, ng && ng.sp <= -6],
-    ["High total (47+)", g => g.t >= 47, ng && ng.t >= 47], ["Low total (under 43)", g => g.t && g.t < 43, ng && ng.t && ng.t < 43],
+    [`Big favorite (${big}+)`, g => g.sp >= big, ng && ng.sp >= big], [`Big underdog (${big}+)`, g => g.sp <= -big, ng && ng.sp <= -big],
+    [`High total (${hiT}+)`, g => g.t >= hiT, ng && ng.t >= hiT], [`Low total (under ${loT})`, g => g.t && g.t < loT, ng && ng.t && ng.t < loT],
+    ["Five-round fights", g => g.sr === 5, ng && ng.sr === 5], ["Three-round fights", g => g.sr === 3, ng && ng.sr === 3],
+    ["Title fights", g => g.ttl === 1, false],
     ["Dome or closed roof", g => g.r === "dome", ng && ng.roof === "dome"], ["Outdoors", g => g.r === "outdoors", ng && ng.roof === "outdoors"],
     ["Cold (40°F or less)", g => g.r === "outdoors" && g.tp != null && g.tp <= 40, false], ["Windy (15+ mph)", g => g.r === "outdoors" && g.wd >= 15, false],
     ["Division games", g => g.dv === 1, ng && ng.div === 1],
     ...(C().rest ? [["Back-to-back (no rest)", g => g.rs === 0, ng && ng.rest === 0], ["1 day of rest", g => g.rs === 1, ng && ng.rest === 1],
       ["2+ days of rest", g => g.rs >= 2 && g.rs <= 6, ng && ng.rest >= 2 && ng.rest <= 6]] : []),
-    ...(sport === "nba" ? [["Starting", g => g.st === 1, false], ["Off the bench", g => g.st === 0, false], ["Played 32+ minutes", g => (g.x.min || 0) >= 32, false]] : []),
+    ...(sport === "nba" || sport === "cbb" ? [["Starting", g => g.st === 1, false], ["Off the bench", g => g.st === 0, false], ["Played 32+ minutes", g => (g.x.min || 0) >= 32, false]] : []),
     [`vs the 10 toughest matchups for ${grpName()}`, g => g.dr && g.dr <= 10, oppRank && oppRank <= 10],
     [`vs the 10 easiest matchups for ${grpName()}`, g => g.dr && g.dr >= bottom, oppRank && oppRank >= bottom],
-    ["Team won", won, false], ["Team lost", lost, false],
+    [sport === "ufc" ? "Won the fight" : "Team won", won, false], [sport === "ufc" ? "Lost the fight" : "Team lost", lost, false],
     ["Playoffs", g => g.post === 1, false]
   ];
-  const tbl = el("table", {class:"rank-t split-t"}, el("thead", {}, el("tr", {}, ...["Situation","Games","Avg","Hit rate"].map(h => el("th", {text:h})))));
+  const tbl = el("table", {class:"rank-t split-t"}, el("thead", {}, el("tr", {}, ...["Situation", sport === "ufc" ? "Fights" : "Games","Avg","Hit rate"].map(h => el("th", {text:h})))));
   const tb = el("tbody");
   const allAvg = all.length ? all.reduce((s, g) => s + statOf(g, key), 0) / all.length : 0;
   S.forEach(([label, fn, now]) => {
     const list = all.filter(fn); if (!list.length) return;
     const r = hitRate(list, key, line, side), avg = list.reduce((s, g) => s + statOf(g, key), 0) / list.length;
     tb.append(el("tr", {class: now ? "now" : ""},
-      el("td", {}, label, now ? el("span", {class:"wk", text: sport === "nfl" ? "This week" : "Next game"}) : null),
+      el("td", {}, label, now ? el("span", {class:"wk", text: nowTag()}) : null),
       el("td", {text:list.length}),
       el("td", {}, fmt1(avg), el("small", {class: avg > allAvg * 1.08 ? "pos" : avg < allAvg * 0.92 ? "neg" : "", text:` ${avg >= allAvg ? "▲" : "▼"}`})),
       el("td", {}, el("div", {class:"hrbar"}, el("i", {style:`width:${Math.round(r.rate * 100)}%`, class:chanceClass(r.rate)}), el("span", {text:`${r.h}/${r.n - r.p} (${pct(r.rate)})`})))));
@@ -626,6 +704,16 @@ function defensePanel(ng, opp){
   const pd = opp.pos[G], lg = defense.league.pos[G], keys = (C().defKeys[G] || []).filter(k => pd.allow[k] != null && lg[k]);
   if (!keys.length) return null;
   const goalie = sport === "nhl" && G === "G", pitcher = sport === "mlb" && G !== "H";
+  if (sport === "ufc"){   // one opponent, so: what fighters have done against him, per fight
+    const panel = el("section", {class:"panel"}, el("h2", {text:`What ${ng.opp} gives up per fight`}),
+      el("p", {class:"sub", text:`What his opponents have done against him, per fight (${pd.g} fight${pd.g === 1 ? "" : "s"} this year, blended with last year's), next to the ${grpName()} average.`}));
+    const dl = el("div", {class:"def-row"});
+    keys.forEach(k => { const f = pd.allow[k] / lg[k];
+      dl.append(el("div", {}, el("span", {class:"lbl", text:C().defLabel[k] || k}), el("strong", {text: k === "win" ? pct(pd.allow[k]) : fmt1(pd.allow[k])}),
+        el("small", {class: f > 1.05 ? "pos" : f < 0.95 ? "neg" : "", text:` ${signPct(f)} vs avg`}))); });
+    panel.append(dl);
+    return panel;
+  }
   const what = goalie ? `${ng.opp}'s offense vs goalies` : pitcher ? `${ng.opp}'s lineup vs ${grpName()}` : `${ng.opp} vs ${grpName()}`;
   const panel = el("section", {class:"panel"}, el("h2", {text:`${what}: ${ordinal(pd.rank)} toughest matchup`}),
     el("p", {class:"sub", text:`Per game ${goalie ? "against" : pitcher ? "against" : "allowed to"} all ${grpName()} combined. ${pd.g} game${pd.g === 1 ? "" : "s"} this season, blended with last season so early games don't overreact.`}));
@@ -675,7 +763,7 @@ function trackCurrent(){
   const ch = sideChance(player, key, line, ui.side, pr);
   const ng = nextGame();
   const bet = {id: Date.now().toString(36), sport, pid: player.id, name: player.name, team: player.team, grp: grpOf(player),
-    key, label: labelOf(key), line, side: ui.side, mu: pr.mu, sd: pr.sd, count: pr.count, disp: pr.disp,
+    key, label: labelOf(key), desc: sideText(key, line, ui.side), line, side: ui.side, mu: pr.mu, sd: pr.sd, count: pr.count, disp: pr.disp,
     pre: ch.p, start: ng ? (ng.time && ng.time.includes("T") ? ng.time : ng.date) : null,
     opp: ng ? ng.opp : "", added: new Date().toISOString(), hist: []};
   if (sport === "mlb" && grpOf(player) === "SP"){ const po = project("outs"); bet.outsMu = po ? po.mu : 17; }
@@ -683,7 +771,7 @@ function trackCurrent(){
     toast("You're already tracking that one."); return;
   }
   tracked.unshift(bet); saveTracked(); renderTracker(); pollSoon(0);
-  toast(`Tracking ${bet.name} ${bet.side} ${bet.line} ${bet.label}.`);
+  toast(`Tracking ${bet.name}: ${bet.desc}.`);
   document.getElementById("tracker").scrollIntoView({behavior:"smooth", block:"start"});
 }
 
@@ -709,7 +797,7 @@ const MARKET_LABEL = {ml: "Moneyline", spread: "Spread", total: "Game total", te
 const signed = v => (v > 0 ? "+" : "") + v;
 function legText(l){
   if (l.unsupported) return l.text;
-  if (l.kind !== "team") return `${l.name} ${l.side} ${l.line} ${l.label}`;
+  if (l.kind !== "team") return l.desc ? `${l.name}: ${l.desc}` : `${l.name} ${l.side} ${l.line} ${l.label}`;
   if (l.market === "ml") return `${l.team.name} moneyline`;
   if (l.market === "spread") return `${l.team.name} ${l.line ? signed(l.line) : "pick'em"}`;
   if (l.market === "teamtotal") return `${l.team.name} team total ${l.side} ${l.line}`;
@@ -760,7 +848,7 @@ function liveRow(b){
   const row = el("li", {class:`trk ${b.result ? "res-" + b.result : L.state === "live" ? "is-live" : ""}`},
     el("div", {class:"trk-main"},
       el("div", {class:"trk-name"}, el("strong", {text:b.name}), el("span", {class:"tag", text:sportLabel(b.sport)})),
-      el("div", {class:"trk-prop", text:`${b.side === "over" ? "Over" : "Under"} ${b.line} ${b.label}`}),
+      el("div", {class:"trk-prop", text: b.desc || `${b.side === "over" ? "Over" : "Under"} ${b.line} ${b.label}`}),
       el("div", {class:"trk-status"}, L.state === "live" && !b.result ? el("span", {class:"dot"}) : null, status, score ? el("span", {class:"split", text:"  " + score}) : null),
       cur != null ? el("div", {class:"trk-prog"}, el("div", {class:"bar"}, el("i", {style:`width:${Math.round(pctToLine * 100)}%`})),
         el("span", {text:`${fmt1(cur)} of ${b.line}${ch && ch.approx ? " (approx.)" : ""}`})) : null,
@@ -838,7 +926,7 @@ async function updateBet(b){
   } catch(e){ b.live = Object.assign(b.live || {}, {error: "Couldn't reach live scores"}); }
 }
 function notify(b, ch){
-  const msg = `${b.name} ${b.side} ${b.line} ${b.label}: ${ch.result === "won" ? "hit" : ch.result === "lost" ? "missed" : "push"} (${fmt1(ch.cur)})`;
+  const msg = `${b.name} ${b.desc || `${b.side} ${b.line} ${b.label}`}: ${ch.result === "won" ? "hit" : ch.result === "lost" ? "missed" : "push"} (${fmt1(ch.cur)})`;
   toast(msg);
   try { if ("Notification" in window && Notification.permission === "granted") new Notification("Trade Scale", {body: msg}); } catch(e){}
 }
@@ -933,7 +1021,7 @@ async function modelLeg(leg){
       const pr = project(leg.key);
       if (!pr){ leg.p = null; leg.note = "Not enough games to model"; return; }
       leg.p = sideChance(doc, leg.key, leg.line, leg.side, pr, leg.sport).p;
-      leg.label = labelOf(leg.key);
+      leg.label = labelOf(leg.key); leg.desc = sideText(leg.key, leg.line, leg.side);
       Object.assign(leg, {mu: pr.mu, sd: pr.sd, count: pr.count, disp: pr.disp, pre: leg.p, team: doc.team, name: doc.name});
       if (leg.sport === "mlb" && leg.grp === "SP"){ const po = project("outs"); leg.outsMu = po ? po.mu : 17; }
       const ng = nextGame();
@@ -948,8 +1036,11 @@ async function slipIndex(){
   if (slip.idx) return slip.idx;
   const all = [];
   await Promise.all(SPORTS.map(async ([sp]) => {
-    try { const d = await loadSportData(sp); d.index.players.forEach(r => all.push({sport: sp, pid: r[0], name: r[1], team: r[2], grp: sp === "nba" ? null : r[3]})); } catch(e){}
+    try { const d = await loadSportData(sp); d.index.players.forEach(r => all.push({sport: sp, pid: r[0], name: r[1], team: r[2], grp: sp === "nba" || sp === "cbb" ? null : r[3]})); } catch(e){}
   }));
+  // a name in two leagues (a rookie who just left college) reads as the pro league first
+  const rank = sp => SPORTS.findIndex(s => s[0] === sp);
+  all.sort((a, b) => rank(a.sport) - rank(b.sport));
   slip.idx = SLIP.buildIndex(all);
   return slip.idx;
 }
@@ -1049,7 +1140,8 @@ function renderSlip(){
     sel.onchange = async () => { leg.key = sel.value || null; leg.line = null; await modelLeg(leg); renderSlip(); };
     const lin = el("input", {type:"number", step:"0.5", min:"0", value: leg.line ?? "", class:"line-in sm", "aria-label":"Line"});
     lin.onchange = async () => { leg.line = Number(lin.value); await modelLeg(leg); renderSlip(); };
-    const side = el("span", {class:"seg"}, ...["over","under"].map(sd => el("button", {text: sd === "over" ? "Over" : "Under", "aria-pressed": String(leg.side === sd),
+    const yn = leg.key && leg.line != null && leg.line < 1 && withSport(leg.sport, () => isBinary(leg.key));
+    const side = el("span", {class:"seg"}, ...["over","under"].map(sd => el("button", {text: yn ? (sd === "over" ? "Yes" : "No") : sd === "over" ? "Over" : "Under", "aria-pressed": String(leg.side === sd),
       onclick: async () => { leg.side = sd; await modelLeg(leg); renderSlip(); }})));
     const pct1 = leg.p != null ? pct(leg.p) : "–";
     ul.append(el("li", {class:"leg"},
@@ -1139,7 +1231,7 @@ function trackSlip(){
     ? {unsupported: true, text: l.text, p: l.p, pre: l.p, manual: null}
     : l.kind === "team"
     ? {kind: "team", sport: l.sport, market: l.market, team: l.team, opp: l.opp, line: l.line, side: l.side, odds: l.odds, pre: l.p, start: l.start}
-    : {sport: l.sport, pid: l.pid, name: l.name, team: l.team, grp: l.grp, key: l.key, label: l.label, line: l.line, side: l.side,
+    : {sport: l.sport, pid: l.pid, name: l.name, team: l.team, grp: l.grp, key: l.key, label: l.label, desc: l.desc, line: l.line, side: l.side,
        mu: l.mu, sd: l.sd, count: l.count, disp: l.disp, pre: l.p, outsMu: l.outsMu, start: l.start, opp: l.opp, hist: []});
   if (!legs.length) return;
   const bet = legs.length === 1 && !legs[0].unsupported && legs[0].kind !== "team"
@@ -1171,7 +1263,7 @@ function renderSports(){
 const teamFix = t => ({LAR:"LA", JAC:"JAX", WSH:"WAS"}[t] || t);   // Sleeper vs nflverse team codes
 async function switchSport(id, playerId){
   sport = id; player = null; index = null; defense = null; injuries = null; model = null;
-  ui = Object.assign(ui, {stat:null, line:null, range:"10", mate:"", oddsO:"", oddsU:""});
+  ui = Object.assign(ui, playerId ? {} : {stat:null, line:null}, {range:"10", mate:"", oddsO:"", oddsU:""});   // a shared link keeps its prop and line
   store.set("tradescale:props-sport", id);
   renderSports(); $("picker").innerHTML = ""; $("app").innerHTML = "";
   const status = $("status"); status.classList.remove("warn"); status.textContent = "Loading...";
