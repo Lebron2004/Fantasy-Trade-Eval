@@ -87,6 +87,8 @@ def card_from_espn():
     data = json.loads(fetch(f"{ESPN}?{q}", tries=2, timeout=30))
     out = []
     for ev in data.get("events", []):
+        if not str(ev.get("name", "")).startswith(("UFC", "Noche UFC")):
+            continue      # the scoreboard also lists Dana White's Contender Series, whose fighters aren't in UFC stats yet
         for comp in ev.get("competitions", []):
             st = ((comp.get("status") or {}).get("type") or {})
             if st.get("completed"):
@@ -95,8 +97,8 @@ def card_from_espn():
             for c in comp.get("competitors", []):
                 a = c.get("athlete") or c.get("team") or {}
                 names.append(a.get("displayName") or a.get("fullName") or a.get("name"))
-            if len(names) != 2 or not all(names):
-                continue
+            if len(names) != 2 or not all(names) or any("TBA" in n for n in names):
+                continue      # placeholder bouts ("TBA vs Opponent TBA") until the matchup is announced
             when = comp.get("date") or ev.get("date") or ""
             rounds = ((comp.get("format") or {}).get("regulation") or {}).get("periods")
             kind = " ".join(str(x) for x in ((comp.get("type") or {}).get("abbreviation"), (comp.get("type") or {}).get("text"),
