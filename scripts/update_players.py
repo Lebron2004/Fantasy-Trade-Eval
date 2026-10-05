@@ -288,6 +288,9 @@ def nfl_context(season, raw):
     remaining, nxt = {}, {}
     open_weeks = [w for w, gl in sched.items() if any(not g[2] for g in gl)]
     this_week = min(open_weeks) if open_weeks else None
+    # Teams with a game this week, played or not: everyone else is on bye. (Comparing next-game week to
+    # this_week alone marks every team that already played as on bye while a Monday game is still open.)
+    playing = {t for g in sched.get(this_week, []) for t in g[:2]}
     for w in sorted(sched):
         for h, a, done in sched[w]:
             if done:
@@ -297,7 +300,7 @@ def nfl_context(season, raw):
             nxt.setdefault(h, (w, "vs " + a, a))
             nxt.setdefault(a, (w, "@" + h, h))
     return {"sched": sched, "weeks": weeks, "dfac": dfac, "remaining": remaining, "next": nxt,
-            "this_week": this_week, "proj": sleeper_projections(season), "season_over": bool(sched) and not open_weeks}
+            "this_week": this_week, "playing": playing, "proj": sleeper_projections(season), "season_over": bool(sched) and not open_weeks}
 
 
 def recent_form(pid, weeks, n=4):
@@ -388,7 +391,7 @@ def fetch_sleeper(sport):
             health = HEALTH.get(r["inj"], 1.0)
             if exp_ppg is not None:
                 ros[pid] = exp_ppg * (1 + 0.6 * (sos - 1)) * games_left * health
-            bye = nx and ctx["this_week"] and nx[0] > ctx["this_week"]
+            bye = bool(ctx["this_week"]) and team not in ctx["playing"]
             extras[pid] = {k: v for k, v in {
                 "nx": "BYE" if bye else (nx[1] if nx else None), "mu": round(mu, 2) if pos in DEF_POS else None,
                 "sos": round(sos, 2) if facs else None, "ppg": round(cur_ppg, 1) if cur_ppg else None,
