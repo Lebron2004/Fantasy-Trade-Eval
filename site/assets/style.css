@@ -7,6 +7,7 @@
   --ch-1:#D32F2F; --ch-2:#E8590C; --ch-3:#B98900; --ch-4:#3E9A3A; --ch-5:#14803C;
   --ch-1-soft:#FDE4E4; --ch-2-soft:#FDEBDD; --ch-3-soft:#FBF1D2; --ch-4-soft:#E3F3E1; --ch-5-soft:#D8F0E0;
   --sp-nfl:#3B7A3E; --sp-nba:#E8590C; --sp-mlb:#1E4FA8; --sp-nhl:#0884A6;
+  --sp-cfb:#8C1D40; --sp-cbb:#6B3FA0; --sp-ufc:#C62828;
   --display:"Barlow Condensed","Arial Narrow","Roboto Condensed",sans-serif;
   --body:"Barlow","Segoe UI",system-ui,-apple-system,sans-serif;
   box-sizing:border-box;
@@ -373,6 +374,7 @@ details.panel summary::after{content:" +";color:var(--muted)} details.panel[open
 .sports button[aria-pressed="true"]{background:var(--sp,var(--brand));color:#fff}
 .sports [data-sport="nfl"]{--sp:var(--sp-nfl)} .sports [data-sport="nba"]{--sp:var(--sp-nba)}
 .sports [data-sport="mlb"]{--sp:var(--sp-mlb)} .sports [data-sport="nhl"]{--sp:var(--sp-nhl)}
+.sports [data-sport="cfb"]{--sp:var(--sp-cfb)} .sports [data-sport="cbb"]{--sp:var(--sp-cbb)} .sports [data-sport="ufc"]{--sp:var(--sp-ufc)}
 .seg button[aria-pressed="true"]{background:var(--brand);color:var(--on-brand)}
 .btn:hover{border-color:var(--brand);color:var(--brand)}
 .btn.primary{background:var(--brand);color:var(--on-brand);border-color:var(--brand)}

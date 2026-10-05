@@ -2,13 +2,17 @@
    allows browser requests) and turns a player's current stat plus the time left into a live chance. */
 const LIVE = (() => {
   const HOSTS = ["https://site.web.api.espn.com", "https://site.api.espn.com"];
-  const PATH = {nfl:"football/nfl", nba:"basketball/nba", nhl:"hockey/nhl", mlb:"baseball/mlb"};
+  const PATH = {nfl:"football/nfl", nba:"basketball/nba", nhl:"hockey/nhl", mlb:"baseball/mlb",
+                cfb:"football/college-football", cbb:"basketball/mens-college-basketball"};   // no UFC: fight stats aren't in ESPN's box scores
+  // college scoreboards list only featured games unless asked for the whole division (80 = FBS, 50 = Division I)
+  const BOARD = {cfb:"scoreboard?groups=80&limit=300", cbb:"scoreboard?groups=50&limit=500"};
   // our team codes -> ESPN's
   const TEAM = {
     nfl: {LA:"LAR", WAS:"WSH"},
     nba: {},
     nhl: {NJD:"NJ", TBL:"TB", LAK:"LA", SJS:"SJ", UTA:"UTAH"},
-    mlb: {AZ:"ARI", CWS:"CHW"}
+    mlb: {AZ:"ARI", CWS:"CHW"},
+    cfb: {}, cbb: {}
   };
   const espnTeam = (sport, t) => (TEAM[sport] || {})[t] || t;
   const norm = s => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
@@ -35,7 +39,7 @@ const LIVE = (() => {
     p.catch(() => cache.delete(key));
     return p;
   }
-  const scoreboard = sport => cached("sb:" + sport, 20000, () => espn(sport, "scoreboard"));
+  const scoreboard = sport => cached("sb:" + sport, 20000, () => espn(sport, BOARD[sport] || "scoreboard"));
   const summary = (sport, id) => cached(`sum:${sport}:${id}`, 20000, () => espn(sport, `summary?event=${id}`));
 
   function statusOf(comp){
@@ -65,7 +69,8 @@ const LIVE = (() => {
     if (st.state === "post" || st.completed) return 0;
     if (st.state === "pre") return 1;
     const p = st.period || 1, c = st.clock ?? 0;
-    if (sport === "nfl") return p > 4 ? 0.02 : Math.max(0, ((4 - p) * 900 + c) / 3600);
+    if (sport === "nfl" || sport === "cfb") return p > 4 ? 0.02 : Math.max(0, ((4 - p) * 900 + c) / 3600);
+    if (sport === "cbb") return p > 2 ? 0.02 : Math.max(0, ((2 - p) * 1200 + c) / 2400);
     if (sport === "nba") return p > 4 ? 0.02 : Math.max(0, ((4 - p) * 720 + c) / 2880);
     if (sport === "nhl") return p > 3 ? 0.02 : Math.max(0, ((3 - p) * 1200 + c) / 3600);
     if (sport === "mlb"){
@@ -117,7 +122,7 @@ const LIVE = (() => {
   };
   function extract(sport, rec){
     const G = rec.groups, x = {}, set = (k, v) => { if (v !== undefined) x[k] = num(v); };
-    if (sport === "nfl"){
+    if (sport === "nfl" || sport === "cfb"){
       const ps = G.passing, ru = G.rushing, re = G.receiving;
       const ca = pick(ps, ["completions/passingAttempts"], ["C/ATT"]);
       if (ca !== undefined){ const [c, a] = pair(ca); x.cmp = c; x.att = a; }
@@ -126,7 +131,7 @@ const LIVE = (() => {
       set("rec", pick(re, ["receptions"], ["REC"])); set("reyd", pick(re, ["receivingYards"], ["YDS"])); set("retd", pick(re, ["receivingTouchdowns"], ["TD"]));
       set("tgt", pick(re, ["receivingTargets"], ["TGTS"]));
       x.ppr = 0.04 * (x.pyd || 0) + 4 * (x.ptd || 0) - 2 * (x.int || 0) + 0.1 * (x.ruyd || 0) + 6 * (x.rutd || 0) + (x.rec || 0) + 0.1 * (x.reyd || 0) + 6 * (x.retd || 0);
-    } else if (sport === "nba"){
+    } else if (sport === "nba" || sport === "cbb"){
       const g = Object.values(G)[0];
       set("pts", pick(g, ["points"], ["PTS"])); set("reb", pick(g, ["rebounds"], ["REB"])); set("ast", pick(g, ["assists"], ["AST"]));
       set("stl", pick(g, ["steals"], ["STL"])); set("blk", pick(g, ["blocks"], ["BLK"])); set("tov", pick(g, ["turnovers"], ["TO"]));
@@ -168,6 +173,7 @@ const LIVE = (() => {
 
   /* ---------- live state for one player ---------- */
   async function playerLive(sport, team, name){
+    if (!PATH[sport]) return {state:"none"};
     const game = await findGame(sport, team);
     if (!game) return {state:"none"};
     const base = {state: game.status.state === "in" ? "live" : game.status.state === "post" ? "final" : "pre",
@@ -233,7 +239,7 @@ const LIVE = (() => {
 
   /* ---------- team bets: moneyline, spread, totals ---------- */
   // how much a full game's margin and total swing, in points/goals/runs
-  const SPREAD_SD = {nfl: 13.5, nba: 12.5, nhl: 2.3, mlb: 4.2}, TOTAL_SD = {nfl: 13.5, nba: 18, nhl: 2.3, mlb: 4.4};
+  const SPREAD_SD = {nfl: 13.5, nba: 12.5, nhl: 2.3, mlb: 4.2, cfb: 15.5, cbb: 11}, TOTAL_SD = {nfl: 13.5, nba: 18, nhl: 2.3, mlb: 4.4, cfb: 16, cbb: 15};
   function PhiInv(p){ let lo = -8, hi = 8; for (let i = 0; i < 60; i++){ const m = (lo + hi) / 2; if (Phi(m) < p) lo = m; else hi = m; } return (lo + hi) / 2; }
   // chance a whole-number score X (remaining part of the game ~ normal) lands above "need"; plus the chance it lands exactly on it
   function above(need, mu, sd){
@@ -243,6 +249,7 @@ const LIVE = (() => {
     return {win, tie};
   }
   async function teamLive(sport, team){
+    if (!PATH[sport]) return {state:"none"};
     const g = await findGame(sport, team);
     if (!g) return {state: "none"};
     return {state: g.status.state === "in" ? "live" : g.status.state === "post" ? "final" : "pre",

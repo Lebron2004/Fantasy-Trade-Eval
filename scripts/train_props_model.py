@@ -32,6 +32,7 @@ RNG = np.random.default_rng(7)
 
 # Mirrors CFG in site/assets/props.js: the props offered per position group and how each is priced.
 NBA_ALL = ["pts", "reb", "ast", "pts+reb+ast", "pts+reb", "pts+ast", "reb+ast", "fg3", "stl", "blk", "stl+blk", "tov", "min"]
+UFC_ALL = ["win", "ko", "sub", "dec", "dist", "rnd", "sig", "tdl", "kd"]
 SPORTS = {
     "nfl": {"props": {"QB": ["pyd", "ptd", "cmp", "att", "int", "ruyd", "pyd+ruyd", "td", "ppr"],
                       "RB": ["ruyd", "car", "ruyd+reyd", "rec", "reyd", "td", "ppr"],
@@ -55,6 +56,21 @@ SPORTS = {
             "count": ["h", "tb", "hr", "rbi", "r", "bb", "so", "sb", "k", "er", "ha", "bba"], "floats": [],
             "cv": {"outs": .22, "pc": .14}, "disp": {"tb": 1.9, "h+r+rbi": 1.5, "rbi": 1.4, "r": 1.2, "er": 1.4, "ha": 1.2, "k": 1.15},
             "K": 15, "damp": (0.5, 0.2), "rest": None, "usage": ["pc"]},
+    "cfb": {"props": {"QB": ["pyd", "ptd", "cmp", "att", "int", "ruyd", "pyd+ruyd", "td"],
+                      "RB": ["ruyd", "car", "ruyd+reyd", "rec", "reyd", "td"],
+                      "WR": ["reyd", "rec", "ruyd+reyd", "td"],
+                      "TE": ["reyd", "rec", "td"]},
+            "count": ["ptd", "int", "td", "rutd", "retd", "rec"], "floats": [],
+            "cv": {"pyd": .35, "att": .22, "cmp": .26, "ruyd": .55, "reyd": .65, "rec": .45, "car": .32},
+            "disp": {}, "K": 4, "damp": (0.6, 0.3), "rest": None, "usage": ["car", "rec", "att"]},
+    "cbb": {"props": {"G": NBA_ALL, "F": NBA_ALL, "C": NBA_ALL},
+            "count": ["fg3", "stl", "blk", "tov"], "floats": ["min"],
+            "cv": {"pts": .36, "reb": .42, "ast": .5, "min": .2, "pts+reb+ast": .3, "pts+reb": .32, "pts+ast": .33, "reb+ast": .38},
+            "disp": {}, "K": 8, "damp": (0.4, 0.15), "rest": None, "usage": ["min"]},
+    "ufc": {"props": {d: UFC_ALL for d in ("FLY", "BW", "FW", "LW", "WW", "MW", "LHW", "HW", "WSW", "WFLY", "WBW", "WFW")},
+            "count": ["win", "ko", "sub", "dec", "dist", "tdl", "kd"], "binary": ["win", "ko", "sub", "dec", "dist"],
+            "floats": ["rnd"], "max_default": {"rnd": 2.5},
+            "cv": {"sig": .6, "rnd": .4}, "disp": {"tdl": 1.8, "kd": 1.3}, "K": 3, "damp": (0.5, 0.25), "rest": None, "usage": ["rnd"]},
 }
 
 # Features, grouped into the plain-language factors the page shows.
@@ -66,6 +82,7 @@ GROUPS = {
     "Rest and schedule": ["rest", "gap", "post"],
     "Role and minutes": ["use_l5", "use_trend", "starter", "n_prior", "cur_n"],
     "Game script": ["sp", "total", "imp", "dome", "div"],
+    "Fight length": ["sched"],
     "Prop type": ["stat"],
 }
 FEATURES = [f for fs in GROUPS.values() for f in fs]
@@ -109,14 +126,18 @@ def count_cdf(k, mu, disp):
     return np.minimum(1, s)
 
 
-def prob_over(mu, sd, line, count, disp):
-    """P(stat > line), matching probOver() in props.js for the half-point lines the model is trained on."""
+def prob_over(mu, sd, line, count, disp, binary=None):
+    """P(stat > line), matching probOver() in props.js for the half-point lines the model is trained on.
+    Yes/no stats (a UFC win, a KO) are 1 with chance mu, so only a line under 1 can go over."""
     mu, sd, line, count, disp = (np.asarray(a, float) for a in (mu, sd, line, count, disp))
     out = np.empty(mu.shape)
-    c = count.astype(bool)
+    b = np.zeros(mu.shape, bool) if binary is None else np.asarray(binary, bool) & np.ones(mu.shape, bool)
+    if b.any():
+        out[b] = np.where(line[b] < 1, np.clip(mu[b], 0.05, 0.95), 0.0)
+    c = count.astype(bool) & ~b
     if c.any():
         out[c] = 1 - count_cdf(np.floor(line[c]), mu[c], disp[c])
-    n = ~c
+    n = ~c & ~b
     if n.any():
         hi = np.floor(line[n]) + 0.5
         out[n] = 1 - phi((hi - mu[n]) / sd[n])
@@ -138,7 +159,7 @@ def load(sport):
             rows.append({"pid": pid, "grp": grp, "i": i, "s": int(g["s"]), "d": g["d"], "o": g.get("o"), "tm": g.get("tm"),
                          "home": g.get("h"), "rest": g.get("rs"), "post": g.get("post", 0), "st": g.get("st"),
                          "sp": g.get("sp"), "total": g.get("t"), "dome": None if g.get("r") is None else int(g.get("r") == "dome"),
-                         "div": g.get("dv"), **{f"x_{k}": v for k, v in g["x"].items()}})
+                         "div": g.get("dv"), "sched": g.get("sr"), **{f"x_{k}": v for k, v in g["x"].items()}})
     G = pd.DataFrame(rows)
     stats = sorted(c[2:] for c in G.columns if c.startswith("x_"))
     for k in stats:
@@ -310,16 +331,17 @@ def build_rows(sport, cfg, index, docs, G, stats, T, opp, lg, n_ev, serving_seas
         tseason = serving_season if not train else None
         # context for each row (past games, or the next game)
         if train:
-            ctx = {c: P[c].to_numpy(float) for c in ("home", "rest", "post", "sp", "total", "dome", "div")}
+            ctx = {c: P[c].to_numpy(float) for c in ("home", "rest", "post", "sp", "total", "dome", "div", "sched")}
             gap = np.append(np.nan, np.diff(dates).astype("timedelta64[D]").astype(float))
             o_allow, l_allow, oev = opp[P.index], lg[P.index], n_ev[P.index]
         else:
             next_date = np.datetime64(ng["date"])
-            ctx = {"home": np.array([float(ng.get("home", np.nan))]), "rest": np.array([ng.get("rest", np.nan) if ng.get("rest") is not None else np.nan], float),
+            ctx = {"home": np.array([float(ng["home"]) if ng.get("home") is not None else np.nan]), "rest": np.array([ng.get("rest", np.nan) if ng.get("rest") is not None else np.nan], float),
                    "post": np.array([0.0]), "sp": np.array([ng.get("sp") if ng.get("sp") is not None else np.nan], float),
                    "total": np.array([ng.get("t") if ng.get("t") is not None else np.nan], float),
                    "dome": np.array([float(ng.get("roof") == "dome") if ng.get("roof") else np.nan]),
-                   "div": np.array([float(ng.get("div", np.nan)) if ng.get("div") is not None else np.nan])}
+                   "div": np.array([float(ng.get("div", np.nan)) if ng.get("div") is not None else np.nan]),
+                   "sched": np.array([float(ng["sr"]) if ng.get("sr") is not None else np.nan])}
             gap = np.array([(next_date - dates[-1]).astype("timedelta64[D]").astype(float)])
             o_now, l_now, oev_now = opponent_now(T, grp, ng["opp"], tseason)
             o_allow, l_allow, oev = o_now[None, :], l_now[None, :], np.array([float(oev_now)])
@@ -340,6 +362,7 @@ def build_rows(sport, cfg, index, docs, G, stats, T, opp, lg, n_ev, serving_seas
             if not len(sel):
                 continue
             count = is_count(cfg, key)
+            binary = key in cfg.get("binary", ())
             base, var = H["base"][sel], H["var"][sel]
             nprior = H["n_prior"][sel]
             # hand model: per-component base x opponent x schedule/script, as in project() on the page
@@ -385,16 +408,20 @@ def build_rows(sport, cfg, index, docs, G, stats, T, opp, lg, n_ev, serving_seas
             d0 = cfg["disp"].get(key, 1.15)
             disp = np.maximum(1, (nprior * d_emp + 10 * d0) / (nprior + 10))
             # lines
-            dl = np.full(len(sel), 0.5) if key == "td" else default_line(H["med10"][sel])
+            dl = np.full(len(sel), 0.5) if key == "td" or binary else default_line(H["med10"][sel])
+            if key in cfg.get("max_default", {}):
+                dl = np.minimum(dl, cfg["max_default"][key])
             if train:
                 lines = [dl]
-                if key != "td":
+                if key != "td" and not binary:
                     step = np.array([line_step(b) for b in base])
                     off = RNG.choice([-3, -2, -1, 1, 2, 3], size=len(sel))
                     lines.append(np.maximum(0.5, dl + off * step))
                 grid = None
             else:
-                if key == "td":
+                if binary:
+                    grid = np.array([0.5])
+                elif key == "td":
                     grid = np.array([0.5, 1.5, 2.5])
                 else:
                     step = line_step(base[0])
@@ -418,8 +445,8 @@ def build_rows(sport, cfg, index, docs, G, stats, T, opp, lg, n_ev, serving_seas
                     "y": (vals[sel] > line).astype(float) if train else np.full(len(sel), np.nan),
                     "push": (vals[sel] == line) if train else np.zeros(len(sel), bool),
                     "stat": key, "line": line, "line_gap": line - base, "line_ratio": line / (base + 0.25),
-                    "form_p": prob_over(base, sd_form, line, np.full(len(sel), count), disp),
-                    "hand_p": prob_over(mu_hand, sd_hand, line, np.full(len(sel), count), disp),
+                    "form_p": prob_over(base, sd_form, line, np.full(len(sel), count), disp, binary),
+                    "hand_p": prob_over(mu_hand, sd_hand, line, np.full(len(sel), count), disp, binary),
                     "mu_hand": mu_hand, "base": base, "sd": np.sqrt(var), "l5": H["l5"][sel], "l10": H["l10"][sel],
                     "l20": H["l20"][sel], "med10": H["med10"][sel], "cur_mean": H["cur_mean"][sel], "prev_mean": H["prev_mean"][sel],
                     "zero20": H["zero20"][sel], "hit10": hit10, "hit20": hit20, "hit_w": hw,
@@ -429,6 +456,7 @@ def build_rows(sport, cfg, index, docs, G, stats, T, opp, lg, n_ev, serving_seas
                     "starter": starter[sel], "n_prior": nprior, "cur_n": H["cur_n"][sel],
                     "sp": ctx["sp"][ci], "total": ctx["total"][ci],
                     "imp": (ctx["total"][ci] + np.nan_to_num(ctx["sp"][ci])) / 2, "dome": ctx["dome"][ci], "div": ctx["div"][ci],
+                    "sched": ctx["sched"][ci],
                 }
                 m = len(sel)
                 out.append({c: (v if isinstance(v, np.ndarray) and v.shape == (m,) else np.full(m, v)) for c, v in f.items()})

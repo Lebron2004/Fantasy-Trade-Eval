@@ -142,7 +142,7 @@ def build_sport(sport, df, cfg, nxt, season_cur, season_names, extra_players=Non
     team_seasons = {}
     for pid_, s, t in played[["pid", "season", "team"]].drop_duplicates().itertuples(index=False):
         team_seasons.setdefault(pid_, set()).add((int(s), t))
-    recent = played[played["season"] >= cur_s - 1]
+    recent = played[played["season"] >= cur_s - cfg.get("recent_seasons", 1)]
     usage = recent.groupby(["pid", "team"])[cfg["usage"]].sum()
 
     # who to include: the daily roster file decides current team and full name when available
@@ -179,7 +179,7 @@ def build_sport(sport, df, cfg, nxt, season_cur, season_names, extra_players=Non
         log = []
         for r in ps.itertuples(index=False):
             s, t, g = int(r.season), r.team, r.game
-            row = {"s": s, "d": r.date, "o": r.opp, "h": int(r.home), "post": int(r.post), "tm": t,
+            row = {"s": s, "d": r.date, "o": r.opp, "h": None if pd.isna(r.home) else int(r.home), "post": int(r.post), "tm": t,
                    "rs": rest.get((t, r.date)), "dr": rank_by_season.get((s, r.opp, r.grp)),
                    "x": {k: (round(float(getattr(r, k)), 1) if k in cfg.get("float_stats", ()) else int(getattr(r, k)))
                          for k in stats if getattr(r, k)}}
@@ -189,6 +189,10 @@ def build_sport(sport, df, cfg, nxt, season_cur, season_names, extra_players=Non
                 row["wn"] = int(r.won)
             if pd.notna(r.starter):
                 row["st"] = int(bool(r.starter))
+            for k, col in cfg.get("extra", {}).items():   # optional per-game context: week, spread, total, rounds
+                v = getattr(r, col)
+                if pd.notna(v):
+                    row[k] = float(v) if isinstance(v, float) and not float(v).is_integer() else int(v)
             mp = me = 0
             for i, m in enumerate(mates):
                 if (s, t) in team_seasons.get(m["pid"], set()):

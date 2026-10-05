@@ -21,3 +21,8 @@ jobs:
 
       - name: News feed reads ESPN (dry run, writes nothing)
         run: python scripts/update_news.py --dry-run
+
+      - name: UFC upcoming card reads ESPN or UFCStats (writes nothing)
+        run: |
+          pip install --quiet pandas
+          python scripts/update_props_ufc.py --check
