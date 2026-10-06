@@ -60,6 +60,9 @@ def team_key(t):
     return re.sub(r"\s+", " ", t).strip()
 
 
+# T20Is only between the twelve full members: associate games are mismatches whose lines no book posts
+FULL_MEMBERS = {"Afghanistan", "Australia", "Bangladesh", "England", "India", "Ireland", "New Zealand", "Pakistan",
+                "South Africa", "Sri Lanka", "West Indies", "Zimbabwe"}
 ALIAS = {"uae": "united arab emirates", "usa": "united states of america", "united states": "united states of america",
          "png": "papua new guinea", "sa": "south africa", "nz": "new zealand", "wi": "west indies"}
 
@@ -74,6 +77,8 @@ def match_rows(m, league):
         return []
     teams = [team_name(t) for t in info.get("teams", [])]
     if len(teams) != 2:
+        return []
+    if league == "T20I" and not FULL_MEMBERS.issuperset(teams):
         return []
     reg = (info.get("registry") or {}).get("people", {})
     xi = {team_name(t): list(ps) for t, ps in (info.get("players") or {}).items()}
