@@ -61,7 +61,7 @@ jobs:
 
       - name: Train the prop model on past games
         continue-on-error: true
-        timeout-minutes: 50
+        timeout-minutes: 70
         run: |
           pip install --quiet lightgbm
           python scripts/train_props_model.py
