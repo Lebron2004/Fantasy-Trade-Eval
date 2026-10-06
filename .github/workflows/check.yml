@@ -22,10 +22,13 @@ jobs:
       - name: News feed reads ESPN (dry run, writes nothing)
         run: python scripts/update_news.py --dry-run
 
-      - name: Probe (temporary)
-        run: python scripts/_probe.py
-
       - name: UFC upcoming card reads ESPN or UFCStats (writes nothing)
         run: |
           pip install --quiet pandas
           python scripts/update_props_ufc.py --check
+
+      - name: Soccer schedules and match summaries read ESPN (writes nothing)
+        run: python scripts/update_props_soccer.py --check
+
+      - name: Cricket reads Cricsheet and ESPN's schedule (writes nothing)
+        run: python scripts/update_props_cricket.py --check

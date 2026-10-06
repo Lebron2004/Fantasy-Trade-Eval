@@ -3,7 +3,11 @@
 const LIVE = (() => {
   const HOSTS = ["https://site.web.api.espn.com", "https://site.api.espn.com"];
   const PATH = {nfl:"football/nfl", nba:"basketball/nba", nhl:"hockey/nhl", mlb:"baseball/mlb",
-                cfb:"football/college-football", cbb:"basketball/mens-college-basketball"};   // no UFC: fight stats aren't in ESPN's box scores
+                cfb:"football/college-football", cbb:"basketball/mens-college-basketball", soc:"soccer", cri:"cricket"};   // no UFC: fight stats aren't in ESPN's box scores
+  // soccer covers several leagues, each with its own scoreboard; cricket has one scoreboard for every series
+  const SOC_LEAGUES = ["eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "usa.1", "uefa.champions"];
+  const CRI_BOARD = "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket";
+  const BAT_KEYS = ["r", "bf", "f4", "s6"];
   // college scoreboards list only featured games unless asked for the whole division (80 = FBS, 50 = Division I)
   const BOARD = {cfb:"scoreboard?groups=80&limit=300", cbb:"scoreboard?groups=50&limit=500"};
   // our team codes -> ESPN's
@@ -12,7 +16,7 @@ const LIVE = (() => {
     nba: {},
     nhl: {NJD:"NJ", TBL:"TB", LAK:"LA", SJS:"SJ", UTA:"UTAH"},
     mlb: {AZ:"ARI", CWS:"CHW"},
-    cfb: {}, cbb: {}
+    cfb: {}, cbb: {}, soc: {}, cri: {}
   };
   const espnTeam = (sport, t) => (TEAM[sport] || {})[t] || t;
   const norm = s => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
@@ -39,8 +43,25 @@ const LIVE = (() => {
     p.catch(() => cache.delete(key));
     return p;
   }
-  const scoreboard = sport => cached("sb:" + sport, 20000, () => espn(sport, BOARD[sport] || "scoreboard"));
-  const summary = (sport, id) => cached(`sum:${sport}:${id}`, 20000, () => espn(sport, `summary?event=${id}`));
+  async function getJSON(url){ const r = await fetch(url, {cache:"no-store"}); if (!r.ok) throw new Error("http " + r.status); return r.json(); }
+  async function multiBoard(sport){
+    if (sport === "soc"){
+      const boards = await Promise.all(SOC_LEAGUES.map(lg => espn(sport, `${lg}/scoreboard`).catch(() => ({events: []}))));
+      return {events: boards.flatMap((b, i) => (b.events || []).map(ev => ({...ev, _lg: SOC_LEAGUES[i]})))};
+    }
+    // cricket: reshape the all-series header feed into scoreboard events
+    const h = await getJSON(CRI_BOARD), events = [];
+    for (const sp of h.sports || []) for (const lg of sp.leagues || []) for (const ev of lg.events || []){
+      const fs = ev.fullStatus || {};
+      events.push({id: ev.id, date: ev.date, _lg: lg.id, competitions: [{
+        status: {type: fs.type || {state: ev.status}, period: fs.period || ev.period},
+        competitors: (ev.competitors || []).map(c => ({homeAway: c.homeAway, score: parseInt(c.score) || 0,
+          team: {abbreviation: c.abbreviation, name: c.displayName, shortDisplayName: c.displayName, displayName: c.displayName}}))}]});
+    }
+    return {events};
+  }
+  const scoreboard = sport => cached("sb:" + sport, 20000, () => sport === "soc" || sport === "cri" ? multiBoard(sport) : espn(sport, BOARD[sport] || "scoreboard"));
+  const summary = (sport, id, lg) => cached(`sum:${sport}:${id}`, 20000, () => espn(sport, `${lg ? lg + "/" : ""}summary?event=${id}`));
 
   function statusOf(comp){
     const st = (comp && comp.status) || {}, ty = st.type || {};
@@ -51,15 +72,19 @@ const LIVE = (() => {
   async function findGame(sport, team){
     const sb = await scoreboard(sport), code = typeof team === "string" ? team : team.abbr, nick = typeof team === "string" ? "" : norm(team.nick);
     const want = espnTeam(sport, code);
+    // soccer and cricket teams go by name ("Arsenal", "Mumbai Indians"); a name ESPN shares across leagues carries its code: "Name (ABC)"
+    const named = (sport === "soc" || sport === "cri") && code ? norm(code.replace(/\s*\(([^)]*)\)$/, "")) : "";
+    const codeIn = (/\(([^)]*)\)$/.exec(code || "") || [])[1];
     for (const ev of sb.events || []){
       const comp = (ev.competitions || [])[0] || {};
       const cs = comp.competitors || [];
-      const me = cs.find(c => c.team && (c.team.abbreviation === want || c.team.abbreviation === code || (nick && norm(c.team.name || c.team.shortDisplayName) === nick)));
+      const me = cs.find(c => c.team && (c.team.abbreviation === want || c.team.abbreviation === code || (nick && norm(c.team.name || c.team.shortDisplayName) === nick)
+        || (named && [c.team.shortDisplayName, c.team.displayName, c.team.name].some(n => norm(n) === named) && (!codeIn || c.team.abbreviation === codeIn))));
       if (!me) continue;
       const them = cs.find(c => c !== me) || {};
       return {id: ev.id, date: ev.date, home: me.homeAway === "home", status: statusOf(comp),
               score: [Number(me.score) || 0, Number(them.score) || 0], opp: them.team ? them.team.abbreviation : "",
-              myAbbr: me.team.abbreviation};
+              myAbbr: me.team.abbreviation, lg: ev._lg};
     }
     return null;
   }
@@ -73,6 +98,7 @@ const LIVE = (() => {
     if (sport === "cbb") return p > 2 ? 0.02 : Math.max(0, ((2 - p) * 1200 + c) / 2400);
     if (sport === "nba") return p > 4 ? 0.02 : Math.max(0, ((4 - p) * 720 + c) / 2880);
     if (sport === "nhl") return p > 3 ? 0.02 : Math.max(0, ((3 - p) * 1200 + c) / 3600);
+    if (sport === "soc") return p > 2 ? 0.02 : Math.max(0.02, (5400 - c) / 5400);     // the clock counts up, in seconds
     if (sport === "mlb"){
       // offensive innings his team has finished: away bats in the top, home in the bottom
       const d = (st.detail || "").toLowerCase(), afterTop = /^(mid|bot|bottom|end)/.test(d), afterBot = /^end/.test(d);
@@ -171,6 +197,54 @@ const LIVE = (() => {
     return x;
   }
 
+  /* ---------- soccer and cricket: player stats come with the lineups, not a box score ---------- */
+  const SOC_STATS = {g: ["totalGoals"], a: ["goalAssists"], sh: ["totalShots"], sot: ["shotsOnTarget"], fc: ["foulsCommitted"],
+                     fs: ["foulsSuffered"], yc: ["yellowCards"], sv: ["saves"], gc: ["goalsConceded"]};
+  function socRows(sum){
+    const out = new Map();
+    for (const r of sum.rosters || []) for (const p of r.roster || []){
+      const nm = norm((p.athlete || {}).displayName); if (!nm) continue;
+      const v = Object.fromEntries((p.stats || []).map(x => [x.name, x.value])), x = {};
+      for (const [k, names] of Object.entries(SOC_STATS)){ const n = names.find(n => v[n] != null); if (n) x[k] = num(v[n]); }
+      out.set(nm, {team: (r.team || {}).abbreviation, x, dnp: !p.starter && !p.subbedIn, off: !!p.subbedOut});
+    }
+    return out;
+  }
+  // cricket: each player's stats per innings; also how much of each side's 20 overs is left
+  function criRows(sum){
+    const out = new Map();
+    for (const r of sum.rosters || []) for (const p of r.roster || []){
+      const nm = norm((p.athlete || {}).displayName); if (!nm) continue;
+      const x = {r: 0, bf: 0, f4: 0, s6: 0, wk: 0, rc: 0, bb: 0}; let out_ = false, batted = false;
+      for (const ls of p.linescores || []) for (const l2 of ls.linescores || []){
+        const v = {}; for (const c of ((l2.statistics || {}).categories || [])) for (const st of c.stats || []) v[st.name] = st.value;
+        if (num(v.batted)){ batted = true; x.r += num(v.runs); x.bf += num(v.ballsFaced); x.f4 += num(v.fours); x.s6 += num(v.sixes); if (num(v.outs)) out_ = true; }
+        if (v.balls != null || v.conceded != null){ x.wk += num(v.wickets); x.rc += num(v.conceded); x.bb += num(v.balls); }
+      }
+      out.set(nm, {team: (r.team || {}).displayName, x, dnp: false, out: out_, batted});
+    }
+    return out;
+  }
+  const oversDone = o => { const w = Math.floor(num(o)); return w + Math.round((num(o) - w) * 10) / 6; };
+  function criLeft(sum, team){
+    // how much of each side's 20 overs is still to come: {bat: his team's innings, bowl: the opponent's}
+    const comp = (((sum.header || {}).competitions || [])[0]) || {}, st = (comp.status || {}).type || {};
+    const inn = {};          // team -> its batting innings so far: {period, overs, over: finished}
+    for (const c of comp.competitors || []){
+      const b = (c.linescores || []).filter(l => l.isBatting).pop();
+      if (b) inn[norm((c.team || {}).displayName)] = {period: num(b.period), overs: oversDone(b.overs), over: /all out|complete|target reached|declared/i.test(b.description || "")};
+    }
+    const latest = Math.max(0, ...Object.values(inn).map(x => x.period));
+    const left = t => {
+      if (st.state === "post" || st.completed) return 0;
+      const x = inn[t]; if (!x) return 1;                        // hasn't batted yet
+      if (x.over || x.period < latest) return 0;                 // all out, overs used up, or the other side has batted since
+      return Math.max(0.02, 1 - x.overs / 20);
+    };
+    const mine = norm(team), them = (comp.competitors || []).map(c => norm((c.team || {}).displayName)).find(t => t !== mine);
+    return {bat: left(mine), bowl: them ? left(them) : 1};
+  }
+
   /* ---------- live state for one player ---------- */
   async function playerLive(sport, team, name){
     if (!PATH[sport]) return {state:"none"};
@@ -180,10 +254,10 @@ const LIVE = (() => {
                   detail: game.status.detail, score: game.score, opp: game.opp, home: game.home, date: game.date, gameId: game.id};
     if (base.state === "pre") return base;
     let sum;
-    try { sum = await summary(sport, game.id); } catch(e){ return {...base, error: "box score unavailable"}; }
+    try { sum = await summary(sport, game.id, game.lg); } catch(e){ return {...base, error: "box score unavailable"}; }
     const hdr = (((sum.header || {}).competitions || [])[0]);
     const st = hdr ? statusOf(hdr) : game.status;
-    const rows = rowsFor(sum), want = norm(name);
+    const rows = sport === "soc" ? socRows(sum) : sport === "cri" ? criRows(sum) : rowsFor(sum), want = norm(name);
     let rec = rows.get(want);
     if (!rec){   // fall back to first initial + last name ("C. McDavid", "Connor McDavid")
       const parts = want.split(" "), last = parts[parts.length - 1], first = (parts[0] || "")[0];
@@ -191,7 +265,10 @@ const LIVE = (() => {
     }
     const state = st.state === "in" ? "live" : st.state === "post" ? "final" : base.state;
     if (!rec) return {...base, state, detail: st.detail, status: st, inBox: false};
-    return {...base, state, detail: st.detail, status: st, inBox: true, dnp: rec.dnp, x: extract(sport, rec)};
+    const res = {...base, state, detail: st.detail, status: st, inBox: true, dnp: rec.dnp, x: rec.x || extract(sport, rec)};
+    if (sport === "soc" && rec.off) res.done = true;              // subbed off: his stats are final
+    if (sport === "cri"){ const l = criLeft(sum, typeof team === "string" ? team : team.nick); res.left = {bat: rec.out ? 0 : l.bat, bowl: l.bowl}; }
+    return res;
   }
 
   /* ---------- chance of the prop given what's happened so far ---------- */
@@ -210,7 +287,8 @@ const LIVE = (() => {
   function liveChance(bet, live){
     const cur = live.x ? statValue(live.x, bet.key) : 0;
     const extra = bet.sport === "mlb" && bet.grp === "SP" ? {pitcher: true, outs: live.x ? live.x.outs : 0, outsMu: bet.outsMu, relieved: live.x && live.x._relieved} : null;
-    const f = live.state === "final" ? 0 : remaining(bet.sport, live.status || {state: live.state}, live.home, extra);
+    const f = live.state === "final" || live.done ? 0 : live.left ? (BAT_KEYS.includes(bet.key.split("+")[0]) ? live.left.bat : live.left.bowl)
+      : remaining(bet.sport, live.status || {state: live.state}, live.home, extra);
     const elapsed = 1 - f;
     // blend the pre-game rate with tonight's pace; trust pace more as the game goes on
     const paceFull = elapsed > 0.08 ? cur / elapsed : bet.mu;

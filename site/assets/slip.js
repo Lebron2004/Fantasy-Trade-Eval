@@ -37,7 +37,17 @@ const SLIP = (() => {
       ["by submission","sub"],["by sub","sub"],["by decision","dec"],["by points","dec"],
       ["significant strikes landed","sig"],["significant strikes","sig"],["sig strikes","sig"],["sig. strikes","sig"],
       ["takedowns landed","tdl"],["takedowns","tdl"],["knockdowns","kd"],["total rounds","rnd"],["rounds","rnd"],
-      ["moneyline","win"],["to win the fight","win"],["to win","win"],["fight winner","win"],["winner","win"]]
+      ["moneyline","win"],["to win the fight","win"],["to win","win"],["fight winner","win"],["winner","win"]],
+    soc: [
+      ["goals conceded","gc"],["shots on target","sot"],["shots on goal","sot"],["sot","sot"],["goal or assist","g+a"],["goal + assist","g+a"],["score or assist","g+a"],
+      ["anytime goalscorer","g"],["anytime goal scorer","g"],["anytime scorer","g"],["to score a goal","g"],["to score","g"],["goals","g"],
+      ["assists","a"],["assist","a"],["fouls committed","fc"],["fouls drawn","fs"],["fouls won","fs"],["fouls suffered","fs"],
+      ["to be booked","yc"],["to be carded","yc"],["to be shown a card","yc"],["player booked","yc"],["yellow card","yc"],
+      ["goalkeeper saves","sv"],["saves","sv"],["total shots","sh"],["shots","sh"],["fouls","fc"]],
+    cri: [
+      ["runs conceded","rc"],["bowler runs","rc"],["runs scored","r"],["batter runs","r"],["batsman runs","r"],["player runs","r"],["total runs","r"],
+      ["wickets taken","wk"],["bowler wickets","wk"],["player wickets","wk"],["wickets","wk"],["wicket","wk"],["boundaries","f4+s6"],
+      ["total fours","f4"],["fours","f4"],["4s","f4"],["total sixes","s6"],["sixes","s6"],["6s","s6"],["balls faced","bf"],["balls bowled","bb"],["runs","r"]]
   };
   MARKETS.cfb = MARKETS.nfl.filter(([, k]) => k !== "tgt" && k !== "ppr");   // no targets or fantasy points in college data
   MARKETS.cbb = MARKETS.nba;
@@ -396,7 +406,7 @@ WSH|Nationals/Nats|Washington|WSN/WAS`
           const ctx = lines.slice(i, end).join(" ");
           for (const c of h.cands){
             const key = findMarket(ctx, c.sport, c.grp);
-            const ln = findLine(ctx) || (key && /^(td|g|hr)$/.test(key) || c.sport === "ufc" && /^(win|ko|sub|dec|dist)$/.test(key) ? {side:"over", line:0.5} : null);
+            const ln = findLine(ctx) || (key && /^(td|g|hr|yc)$/.test(key) || c.sport === "ufc" && /^(win|ko|sub|dec|dist)$/.test(key) ? {side:"over", line:0.5} : null);
             const score = (key ? 2 : 0) + (ln ? 1 : 0);
             if (!best || score > best.score) best = {c, key, ln, ctx, end, score};
           }

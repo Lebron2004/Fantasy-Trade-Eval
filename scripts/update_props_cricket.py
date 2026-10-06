@@ -164,14 +164,33 @@ def matches(check=False):
 
 
 # ---------------------------------------------------------------- upcoming matches
-def upcoming():
-    """Men's T20 matches on ESPN's cricket scoreboard that haven't started: [(date, time, team_a, team_b, event)]."""
-    data = json.loads(fetch(ESPN_HEADER, tries=2, timeout=30))
+def upcoming(days=14):
+    """Men's T20 matches on ESPN's cricket scoreboard that haven't started: [(date, time, team_a, team_b, event)].
+    The scoreboard answers one day at a time (a date range is refused), so it's asked for each of the next two weeks."""
+    out, seen, reached = [], set(), 0
+    for i in range(days):
+        try:
+            data = json.loads(fetch(f"{ESPN_HEADER}&dates={TODAY + timedelta(days=i):%Y%m%d}", tries=2, timeout=30))
+            reached += 1
+        except Exception as e:
+            print(f"  cricket schedule for {TODAY + timedelta(days=i)} unavailable: {str(e)[:80]}", file=sys.stderr)
+            continue
+        out.extend(header_matches(data, seen))
+    if not reached:
+        raise RuntimeError("couldn't reach ESPN's cricket scoreboard")
+    return out
+
+
+def header_matches(data, seen):
     out = []
     for sp in data.get("sports", []):
         for lg in sp.get("leagues", []):
             lname = str(lg.get("name") or "")
             for ev in lg.get("events", []):
+                key = ev.get("id") or (ev.get("name"), ev.get("date"))
+                if key in seen:
+                    continue
+                seen.add(key)
                 cls = ev.get("class") or {}
                 kind = " ".join(str(cls.get(k) or "") for k in ("eventType", "generalClassCard", "name"))
                 if "T20" not in kind and "Twenty20" not in kind:

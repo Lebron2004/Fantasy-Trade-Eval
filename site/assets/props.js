@@ -184,7 +184,9 @@ const implied = o => { const n = Number(o); if (!n || Math.abs(n) < 100) return 
 const toAmerican = p => p <= 0 || p >= 1 ? "–" : p >= 0.5 ? String(Math.round(-100 * p / (1 - p))) : "+" + Math.round(100 * (1 - p) / p);
 const pct = p => Math.round(p * 100) + "%";
 const vsAt = h => h === 0 ? "at" : "vs";    // neutral sites and fights have no home team
-const oppShort = o => sport === "ufc" ? String(o).replace(/\s*\(.*\)$/, "").split(" ").slice(-1)[0] : o;
+const oppShort = o => sport === "ufc" ? String(o).replace(/\s*\(.*\)$/, "").split(" ").slice(-1)[0]
+  : (sport === "cri" || sport === "soc") && String(o).length > 10 && String(o).includes(" ") ? String(o).split(/\s+/).map(w => w[0]).join("").toUpperCase()   // "Chennai Super Kings" -> "CSK"
+  : o;
 const signPct = f => { const d = Math.round((f - 1) * 100); return (d > 0 ? "+" : "") + d + "%"; };
 const fmt1 = v => (Math.round(v * 10) / 10).toString();
 const median = a => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : 0; };
