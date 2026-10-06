@@ -1,9 +1,9 @@
-/* Props page (NFL, NBA, NHL, MLB, college football and basketball, UFC): hit-rate history, situational and scheme
+/* Props page (NFL, NBA, NHL, MLB, college football and basketball, UFC, soccer, T20 cricket): hit-rate history, situational and scheme
    splits, and a transparent projection. */
 (() => {
 const {el, norm, getJSON, store, chanceClass} = TS;
 const $ = id => document.getElementById(id);
-const SPORTS = [["nfl","Football"],["nba","Basketball"],["nhl","Hockey"],["mlb","Baseball"],["cfb","College FB"],["cbb","College BB"],["ufc","UFC"]];
+const SPORTS = [["nfl","Football"],["nba","Basketball"],["nhl","Hockey"],["mlb","Baseball"],["cfb","College FB"],["cbb","College BB"],["ufc","UFC"],["soc","Soccer"],["cri","Cricket"]];
 const FOOTBALL = ["nfl","cfb"];
 const CFG = {
   nfl: {
@@ -82,7 +82,31 @@ const CFG = {
     groups: {FLY:"flyweights", BW:"bantamweights", FW:"featherweights", LW:"lightweights", WW:"welterweights", MW:"middleweights",
              LHW:"light heavyweights", HW:"heavyweights", WSW:"strawweights", WFLY:"flyweights", WBW:"bantamweights", WFW:"featherweights"},
     defKeys: null, defLabel: {sig:"sig. strikes absorbed", tdl:"takedowns allowed", kd:"knockdowns suffered", win:"opponents' win rate"},
-    search: "Search any UFC fighter", rest: null}
+    search: "Search any UFC fighter", rest: null},
+  // Premier League, La Liga, Serie A, Bundesliga, Ligue 1, MLS and the Champions League in one tab
+  soc: {
+    props: {F: [["sot","Shots on target"],["sh","Shots"],["g","Anytime goalscorer"],["a","Assists"],["g+a","Goal or assist"],["fc","Fouls committed"],["fs","Fouls drawn"],["yc","Booked (yellow card)"]],
+            M: [["sh","Shots"],["sot","Shots on target"],["g","Anytime goalscorer"],["a","Assists"],["g+a","Goal or assist"],["fc","Fouls committed"],["fs","Fouls drawn"],["yc","Booked (yellow card)"]],
+            D: [["sh","Shots"],["sot","Shots on target"],["fc","Fouls committed"],["fs","Fouls drawn"],["g","Anytime goalscorer"],["yc","Booked (yellow card)"]],
+            G: [["sv","Saves"],["gc","Goals conceded"]]},
+    label: {g:"goals", a:"assists", sh:"shots", sot:"shots on target", fc:"fouls", fs:"fouls drawn", yc:"yellow cards", sv:"saves", gc:"goals conceded"},
+    count: ["g","a","sh","sot","fc","fs","yc","sv","gc"],
+    yesNo: {g:["Scores (anytime)","Doesn't score"], yc:["Gets booked","Not booked"]},
+    cv: {}, disp: {sh:1.25, sot:1.1, fc:1.2, fs:1.25, sv:1.1},
+    groups: {F:"forwards", M:"midfielders", D:"defenders", G:"goalkeepers"},
+    defKeys: {F:["sh","sot","g","a"], M:["sh","sot","g","fs"], D:["sh","fc","fs","g"], G:["sv","gc"]},
+    search: "Search any soccer player or club", rest: null},
+  // T20: IPL, Big Bash, PSL, CPL, SA20, MLC, ILT20 and men's T20 internationals
+  cri: {
+    props: {BAT: [["r","Runs"],["f4","Fours"],["s6","Sixes"],["f4+s6","Boundaries (4s + 6s)"],["bf","Balls faced"]],
+            AR: [["r","Runs"],["wk","Wickets"],["f4","Fours"],["s6","Sixes"],["rc","Runs conceded"]],
+            BOWL: [["wk","Wickets"],["rc","Runs conceded"],["bb","Balls bowled"]]},
+    label: {r:"runs", bf:"balls faced", f4:"fours", s6:"sixes", wk:"wickets", rc:"runs conceded", bb:"balls bowled", ct:"catches"},
+    count: ["f4","s6","wk","ct"],
+    cv: {r:.85, bf:.75, rc:.35, bb:.25}, disp: {f4:1.9, s6:1.9, "f4+s6":2.1, wk:1.15},
+    groups: {BAT:"batters", AR:"all-rounders", BOWL:"bowlers"},
+    defKeys: {BAT:["r","f4","s6","bf"], AR:["r","wk","s6","rc"], BOWL:["wk","rc","bb"]},
+    search: "Search any T20 cricketer or team", rest: null}
 };
 CFG.nba.props = {G: CFG.nba.all, F: CFG.nba.all, C: CFG.nba.all};
 CFG.cbb.props = CFG.nba.props;
@@ -135,7 +159,7 @@ function probOver(mu, sd, line, count, disp = 1, binary = false){
 /* ---------- Trained model ---------- */
 // scripts/train_props_model.py writes, into each player's file, the trained model's chance of the Over for his next
 // game at a grid of half-point lines ("ml"). It's used wherever the line falls inside that grid; otherwise the formula.
-const FLOAT_STATS = {nfl:["ppr"], nba:["min"], nhl:["toi"], mlb:[], cfb:[], cbb:["min"], ufc:["rnd"]};
+const FLOAT_STATS = {nfl:["ppr"], nba:["min"], nhl:["toi"], mlb:[], cfb:[], cbb:["min"], ufc:["rnd"], soc:[], cri:[]};
 function mlChance(doc, key, line, sp = sport){
   const m = doc && doc.ml && doc.ml[key]; if (!m || !m.l || !m.l.length) return null;
   const L = m.l, P = m.p;
@@ -201,7 +225,7 @@ function project(key){
     let fOpp = 1;
     if (opp && opp.pos[pos] && lg.pos[pos] && lg.pos[pos][c]){
       const raw = (opp.pos[pos].allow[c] ?? lg.pos[pos][c]) / lg.pos[pos][c];
-      const [damp, cap] = {nfl:[0.6, 0.3], nba:[0.4, 0.15], nhl:[0.5, 0.2], mlb:[0.5, 0.2], cfb:[0.6, 0.3], cbb:[0.4, 0.15], ufc:[0.5, 0.25]}[sport];   // trust in position-level defense data
+      const [damp, cap] = {nfl:[0.6, 0.3], nba:[0.4, 0.15], nhl:[0.5, 0.2], mlb:[0.5, 0.2], cfb:[0.6, 0.3], cbb:[0.4, 0.15], ufc:[0.5, 0.25], soc:[0.4, 0.2], cri:[0.4, 0.2]}[sport];   // trust in position-level defense data
       fOpp = Math.min(1 + cap, Math.max(1 - cap, 1 + (raw - 1) * damp));
     }
     // scheme: his splits weighted by how often this defense does each thing
@@ -313,6 +337,7 @@ function bestPanel(b, sp){
   const unit = sp === "ufc" ? "fight" : "game";
   const basis = sp === "ufc" ? "his last 10 fights" : sp === "cfb" || sp === "cbb" ? "this season's games (his last 10 until he has 3)" : "his last 10 games";
   const fresh = sp === "ufc" ? "Rebuilt every morning with the latest results and the next card."
+    : sp === "soc" || sp === "cri" ? "Rebuilt every morning with the latest results; players left out of their team's recent matches are skipped, since injury news and lineups aren't in the free data."
     : sp === "cfb" || sp === "cbb" ? "Rebuilt every morning with the latest results; players who sat out their team's last game are left out, since college injury reports aren't in the free data."
     : "Rebuilt every morning with the latest results and injury tags; injured players are left out.";
   box.append(el("p", {class:"sub", text:`The trained model's most likely props across ${b.games} ${unit}${b.games === 1 ? "" : "s"}, each at the line nearest his average over ${basis}, since real sportsbook lines aren't in the free data. Your book's line may differ, so tap a pick to check it at that line. ${fresh}`}));
@@ -429,7 +454,7 @@ function render(){
   if (ng){
     const bits = [new Date(ng.date + "T12:00:00").toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric"})];
     if (FOOTBALL.includes(sport)) bits.push(ng.sp == null ? "no line yet" : ng.sp > 0 ? `favored by ${ng.sp}` : ng.sp < 0 ? `${-ng.sp}-point underdog` : "pick'em");
-    if (ng.home == null && sport !== "ufc") bits.push("neutral site");
+    if (ng.home == null && sport !== "ufc" && sport !== "cri") bits.push("neutral site");
     if (ng.event) bits.push(ng.event);
     if (ng.sr) bits.push(`${ng.sr} rounds`);
     if (ng.t) bits.push(`total ${ng.t}`);
@@ -703,7 +728,7 @@ function defensePanel(ng, opp){
   if (!ng || !opp || !opp.pos[G]) return null;
   const pd = opp.pos[G], lg = defense.league.pos[G], keys = (C().defKeys[G] || []).filter(k => pd.allow[k] != null && lg[k]);
   if (!keys.length) return null;
-  const goalie = sport === "nhl" && G === "G", pitcher = sport === "mlb" && G !== "H";
+  const goalie = (sport === "nhl" || sport === "soc") && G === "G", pitcher = (sport === "mlb" && G !== "H") || (sport === "cri" && G === "BOWL");
   if (sport === "ufc"){   // one opponent, so: what fighters have done against him, per fight
     const panel = el("section", {class:"panel"}, el("h2", {text:`What ${ng.opp} gives up per fight`}),
       el("p", {class:"sub", text:`What his opponents have done against him, per fight (${pd.g} fight${pd.g === 1 ? "" : "s"} this year, blended with last year's), next to the ${grpName()} average.`}));

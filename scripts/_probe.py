@@ -10,40 +10,38 @@ def try_(u):
     except Exception as e:
         print(f"== FAIL {u}: {e}")
 E = "https://site.api.espn.com/apis/site/v2/sports/soccer/"
-for q in ("?dates=2026&limit=1000", "?dates=2025&limit=1000", "?dates=202609", "?dates=20260920-20260927", "?dates=20260920-20260921",
-          "?dates=20260801-20261231&limit=500", "?season=2025&limit=500"):
-    d = try_(E + "eng.1/scoreboard" + q)
-    if d:
-        evs = d.get("events", [])
-        print("   events", len(evs), evs[0]["date"] if evs else "", evs[-1]["date"] if evs else "", (d.get("leagues") or [{}])[0].get("calendarStartDate"))
-d = try_(E + "eng.1/scoreboard?dates=20260926")
-evs = (d or {}).get("events", []) or (try_(E + "eng.1/scoreboard?dates=20260927") or {}).get("events", [])
-if evs:
-    ev = evs[0]; c = ev["competitions"][0]
-    print("comp keys", list(c)); print("competitor", json.dumps(c["competitors"][0])[:700]); print("season", ev.get("season"))
-    s = try_(E + f"eng.1/summary?event={ev['id']}")
-    print("summary keys", list(s))
-    for r in s.get("rosters", [])[:1]:
-        print("roster keys", list(r), json.dumps(r.get("team"))[:200], "n", len(r.get("roster", [])))
-        for p in r.get("roster", [])[:1] + r.get("roster", [])[11:12] + r.get("roster", [])[-1:]:
-            print("PLAYER", json.dumps(p)[:2500])
-    print("keyEvents", json.dumps((s.get("keyEvents") or [])[:2])[:800])
-for lg in ("uefa.champions", "usa.1", "esp.1", "ita.1", "ger.1", "fra.1"):
-    d = try_(E + lg + "/scoreboard?dates=2026&limit=1000")
-    if d: print("   events", len(d.get("events", [])))
-for q in ("&dates=20261010", "&dates=20261010-20261020", "&limit=500"):
-    h = try_("https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket" + q)
-    if h: print("   ", [(l.get("name"), len(l.get("events", [])), [e.get("date")[:10] for e in l.get("events", [])][:3]) for l in h["sports"][0]["leagues"]][:12])
+d = try_(E + "eng.1/scoreboard?dates=202609")
+ev = [e for e in d["events"] if e["competitions"][0]["status"]["type"].get("completed")][0]
+c = ev["competitions"][0]
+print("comp keys", list(c)); print("competitor", json.dumps(c["competitors"][0])[:600]); print("season", ev.get("season"), "status", json.dumps(c["status"])[:300])
+s = try_(E + f"eng.1/summary?event={ev['id']}")
+print("summary keys", list(s))
+for r in s.get("rosters", [])[:1]:
+    print("roster keys", list(r), json.dumps(r.get("team"))[:200], "n", len(r.get("roster", [])))
+    ro = r.get("roster", [])
+    for p in ro[:1] + ro[11:13] + ro[-1:]:
+        print("PLAYER", json.dumps(p)[:2200])
+    print("POSITIONS", sorted({(p.get("position") or {}).get("abbreviation") for p in ro if p.get("position")}))
+print("keyEvents", json.dumps([(k.get("type"), k.get("clock"), [a.get("athlete", {}).get("displayName") for a in k.get("participants", [])]) for k in (s.get("keyEvents") or []) if "ubstit" in json.dumps(k.get("type"))][:3]))
+print("boxscore", json.dumps((s.get("boxscore") or {}).get("players"))[:300])
+fut = [e for e in d["events"] if e["competitions"][0]["status"]["type"].get("state") == "pre"]
+d2 = try_(E + "eng.1/scoreboard?dates=202610")
+fut = [e for e in d2["events"] if e["competitions"][0]["status"]["type"].get("state") == "pre"]
+print("future", len(fut), fut and json.dumps([x.get("team", {}).get("abbreviation") for x in fut[0]["competitions"][0]["competitors"]]))
 h = try_("https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket")
 for lg in h["sports"][0]["leagues"]:
     for ev in lg.get("events", []):
-        if ev.get("status") == "in" and "T20" in json.dumps(ev.get("class")):
-            print("LIVE EVENT", lg["id"], ev["id"], ev.get("name"), json.dumps(ev.get("fullStatus"))[:400], json.dumps(ev.get("competitors"))[:300])
+        if ev.get("status") in ("in", "post") and "T20" in json.dumps(ev.get("class")):
             s = try_(f"https://site.api.espn.com/apis/site/v2/sports/cricket/{lg['id']}/summary?event={ev['id']}")
-            for mc in (s or {}).get("matchcards", []):
-                print("MC", mc.get("headline"), mc.get("inningsNumber"), mc.get("teamName"), json.dumps(mc.get("playerDetails", [])[:2])[:600])
-            hc = ((s or {}).get("header") or {}).get("competitions", [{}])[0]
-            print("STATUS", json.dumps(hc.get("status"))[:500])
-            for cp in hc.get("competitors", []):
-                print("LS", cp["team"]["displayName"], [(l.get("period"), l.get("runs"), l.get("wickets"), l.get("overs"), l.get("isBatting"), l.get("description")) for l in cp.get("linescores", [])])
+            print("MCs", [(m.get("headline"), m.get("inningsNumber"), m.get("teamName"), len(m.get("playerDetails", []))) for m in s.get("matchcards", [])])
+            for m in s.get("matchcards", []):
+                if m.get("headline") == "Bowling":
+                    print("BOWL", json.dumps(m.get("playerDetails", [])[:1])); break
+            for r in s.get("rosters", [])[:1]:
+                for p in r.get("roster", [])[:1]:
+                    for ls in p.get("linescores", []):
+                        for l2 in ls.get("linescores", []):
+                            st = (l2.get("statistics") or {}).get("categories", [])
+                            print("PERIOD", ls.get("period"), [(x.get("name"), x.get("value")) for cat in st for x in cat.get("stats", []) if x.get("value") not in (0, "0", None)][:60])
+                            print("ALLNAMES", [x.get("name") for cat in st for x in cat.get("stats", [])])
             break
