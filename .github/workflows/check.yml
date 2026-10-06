@@ -26,3 +26,9 @@ jobs:
         run: |
           pip install --quiet pandas
           python scripts/update_props_ufc.py --check
+
+      - name: Soccer schedules and match summaries read ESPN (writes nothing)
+        run: python scripts/update_props_soccer.py --check
+
+      - name: Cricket reads Cricsheet and ESPN's schedule (writes nothing)
+        run: python scripts/update_props_cricket.py --check

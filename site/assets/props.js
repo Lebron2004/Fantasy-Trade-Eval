@@ -1,9 +1,9 @@
-/* Props page (NFL, NBA, NHL, MLB, college football and basketball, UFC): hit-rate history, situational and scheme
+/* Props page (NFL, NBA, NHL, MLB, college football and basketball, UFC, soccer, T20 cricket): hit-rate history, situational and scheme
    splits, and a transparent projection. */
 (() => {
 const {el, norm, getJSON, store, chanceClass} = TS;
 const $ = id => document.getElementById(id);
-const SPORTS = [["nfl","Football"],["nba","Basketball"],["nhl","Hockey"],["mlb","Baseball"],["cfb","College FB"],["cbb","College BB"],["ufc","UFC"]];
+const SPORTS = [["nfl","Football"],["nba","Basketball"],["nhl","Hockey"],["mlb","Baseball"],["cfb","College FB"],["cbb","College BB"],["ufc","UFC"],["soc","Soccer"],["cri","Cricket"]];
 const FOOTBALL = ["nfl","cfb"];
 const CFG = {
   nfl: {
@@ -82,7 +82,31 @@ const CFG = {
     groups: {FLY:"flyweights", BW:"bantamweights", FW:"featherweights", LW:"lightweights", WW:"welterweights", MW:"middleweights",
              LHW:"light heavyweights", HW:"heavyweights", WSW:"strawweights", WFLY:"flyweights", WBW:"bantamweights", WFW:"featherweights"},
     defKeys: null, defLabel: {sig:"sig. strikes absorbed", tdl:"takedowns allowed", kd:"knockdowns suffered", win:"opponents' win rate"},
-    search: "Search any UFC fighter", rest: null}
+    search: "Search any UFC fighter", rest: null},
+  // Premier League, La Liga, Serie A, Bundesliga, Ligue 1, MLS and the Champions League in one tab
+  soc: {
+    props: {F: [["sot","Shots on target"],["sh","Shots"],["g","Anytime goalscorer"],["a","Assists"],["g+a","Goal or assist"],["fc","Fouls committed"],["fs","Fouls drawn"],["yc","Booked (yellow card)"]],
+            M: [["sh","Shots"],["sot","Shots on target"],["g","Anytime goalscorer"],["a","Assists"],["g+a","Goal or assist"],["fc","Fouls committed"],["fs","Fouls drawn"],["yc","Booked (yellow card)"]],
+            D: [["sh","Shots"],["sot","Shots on target"],["fc","Fouls committed"],["fs","Fouls drawn"],["g","Anytime goalscorer"],["yc","Booked (yellow card)"]],
+            G: [["sv","Saves"],["gc","Goals conceded"]]},
+    label: {g:"goals", a:"assists", sh:"shots", sot:"shots on target", fc:"fouls", fs:"fouls drawn", yc:"yellow cards", sv:"saves", gc:"goals conceded"},
+    count: ["g","a","sh","sot","fc","fs","yc","sv","gc"],
+    yesNo: {g:["Scores (anytime)","Doesn't score"], yc:["Gets booked","Not booked"]},
+    cv: {}, disp: {sh:1.25, sot:1.1, fc:1.2, fs:1.25, sv:1.1},
+    groups: {F:"forwards", M:"midfielders", D:"defenders", G:"goalkeepers"},
+    defKeys: {F:["sh","sot","g","a"], M:["sh","sot","g","fs"], D:["sh","fc","fs","g"], G:["sv","gc"]},
+    search: "Search any soccer player or club", rest: null},
+  // T20: IPL, Big Bash, PSL, CPL, SA20, MLC, ILT20 and men's T20 internationals
+  cri: {
+    props: {BAT: [["r","Runs"],["f4","Fours"],["s6","Sixes"],["f4+s6","Boundaries (4s + 6s)"],["bf","Balls faced"]],
+            AR: [["r","Runs"],["wk","Wickets"],["f4","Fours"],["s6","Sixes"],["rc","Runs conceded"]],
+            BOWL: [["wk","Wickets"],["rc","Runs conceded"],["bb","Balls bowled"]]},
+    label: {r:"runs", bf:"balls faced", f4:"fours", s6:"sixes", wk:"wickets", rc:"runs conceded", bb:"balls bowled", ct:"catches"},
+    count: ["f4","s6","wk","ct"],
+    cv: {r:.85, bf:.75, rc:.35, bb:.25}, disp: {f4:1.9, s6:1.9, "f4+s6":2.1, wk:1.15},
+    groups: {BAT:"batters", AR:"all-rounders", BOWL:"bowlers"},
+    defKeys: {BAT:["r","f4","s6","bf"], AR:["r","wk","s6","rc"], BOWL:["wk","rc","bb"]},
+    search: "Search any T20 cricketer or team", rest: null}
 };
 CFG.nba.props = {G: CFG.nba.all, F: CFG.nba.all, C: CFG.nba.all};
 CFG.cbb.props = CFG.nba.props;
@@ -135,7 +159,7 @@ function probOver(mu, sd, line, count, disp = 1, binary = false){
 /* ---------- Trained model ---------- */
 // scripts/train_props_model.py writes, into each player's file, the trained model's chance of the Over for his next
 // game at a grid of half-point lines ("ml"). It's used wherever the line falls inside that grid; otherwise the formula.
-const FLOAT_STATS = {nfl:["ppr"], nba:["min"], nhl:["toi"], mlb:[], cfb:[], cbb:["min"], ufc:["rnd"]};
+const FLOAT_STATS = {nfl:["ppr"], nba:["min"], nhl:["toi"], mlb:[], cfb:[], cbb:["min"], ufc:["rnd"], soc:[], cri:[]};
 function mlChance(doc, key, line, sp = sport){
   const m = doc && doc.ml && doc.ml[key]; if (!m || !m.l || !m.l.length) return null;
   const L = m.l, P = m.p;
@@ -160,7 +184,9 @@ const implied = o => { const n = Number(o); if (!n || Math.abs(n) < 100) return 
 const toAmerican = p => p <= 0 || p >= 1 ? "–" : p >= 0.5 ? String(Math.round(-100 * p / (1 - p))) : "+" + Math.round(100 * (1 - p) / p);
 const pct = p => Math.round(p * 100) + "%";
 const vsAt = h => h === 0 ? "at" : "vs";    // neutral sites and fights have no home team
-const oppShort = o => sport === "ufc" ? String(o).replace(/\s*\(.*\)$/, "").split(" ").slice(-1)[0] : o;
+const oppShort = o => sport === "ufc" ? String(o).replace(/\s*\(.*\)$/, "").split(" ").slice(-1)[0]
+  : (sport === "cri" || sport === "soc") && String(o).length > 10 && String(o).includes(" ") ? String(o).split(/\s+/).map(w => w[0]).join("").toUpperCase()   // "Chennai Super Kings" -> "CSK"
+  : o;
 const signPct = f => { const d = Math.round((f - 1) * 100); return (d > 0 ? "+" : "") + d + "%"; };
 const fmt1 = v => (Math.round(v * 10) / 10).toString();
 const median = a => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : 0; };
@@ -201,7 +227,7 @@ function project(key){
     let fOpp = 1;
     if (opp && opp.pos[pos] && lg.pos[pos] && lg.pos[pos][c]){
       const raw = (opp.pos[pos].allow[c] ?? lg.pos[pos][c]) / lg.pos[pos][c];
-      const [damp, cap] = {nfl:[0.6, 0.3], nba:[0.4, 0.15], nhl:[0.5, 0.2], mlb:[0.5, 0.2], cfb:[0.6, 0.3], cbb:[0.4, 0.15], ufc:[0.5, 0.25]}[sport];   // trust in position-level defense data
+      const [damp, cap] = {nfl:[0.6, 0.3], nba:[0.4, 0.15], nhl:[0.5, 0.2], mlb:[0.5, 0.2], cfb:[0.6, 0.3], cbb:[0.4, 0.15], ufc:[0.5, 0.25], soc:[0.4, 0.2], cri:[0.4, 0.2]}[sport];   // trust in position-level defense data
       fOpp = Math.min(1 + cap, Math.max(1 - cap, 1 + (raw - 1) * damp));
     }
     // scheme: his splits weighted by how often this defense does each thing
@@ -313,6 +339,7 @@ function bestPanel(b, sp){
   const unit = sp === "ufc" ? "fight" : "game";
   const basis = sp === "ufc" ? "his last 10 fights" : sp === "cfb" || sp === "cbb" ? "this season's games (his last 10 until he has 3)" : "his last 10 games";
   const fresh = sp === "ufc" ? "Rebuilt every morning with the latest results and the next card."
+    : sp === "soc" || sp === "cri" ? "Rebuilt every morning with the latest results; players left out of their team's recent matches are skipped, since injury news and lineups aren't in the free data."
     : sp === "cfb" || sp === "cbb" ? "Rebuilt every morning with the latest results; players who sat out their team's last game are left out, since college injury reports aren't in the free data."
     : "Rebuilt every morning with the latest results and injury tags; injured players are left out.";
   box.append(el("p", {class:"sub", text:`The trained model's most likely props across ${b.games} ${unit}${b.games === 1 ? "" : "s"}, each at the line nearest his average over ${basis}, since real sportsbook lines aren't in the free data. Your book's line may differ, so tap a pick to check it at that line. ${fresh}`}));
@@ -429,7 +456,7 @@ function render(){
   if (ng){
     const bits = [new Date(ng.date + "T12:00:00").toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric"})];
     if (FOOTBALL.includes(sport)) bits.push(ng.sp == null ? "no line yet" : ng.sp > 0 ? `favored by ${ng.sp}` : ng.sp < 0 ? `${-ng.sp}-point underdog` : "pick'em");
-    if (ng.home == null && sport !== "ufc") bits.push("neutral site");
+    if (ng.home == null && sport !== "ufc" && sport !== "cri") bits.push("neutral site");
     if (ng.event) bits.push(ng.event);
     if (ng.sr) bits.push(`${ng.sr} rounds`);
     if (ng.t) bits.push(`total ${ng.t}`);
@@ -703,7 +730,7 @@ function defensePanel(ng, opp){
   if (!ng || !opp || !opp.pos[G]) return null;
   const pd = opp.pos[G], lg = defense.league.pos[G], keys = (C().defKeys[G] || []).filter(k => pd.allow[k] != null && lg[k]);
   if (!keys.length) return null;
-  const goalie = sport === "nhl" && G === "G", pitcher = sport === "mlb" && G !== "H";
+  const goalie = (sport === "nhl" || sport === "soc") && G === "G", pitcher = (sport === "mlb" && G !== "H") || (sport === "cri" && G === "BOWL");
   if (sport === "ufc"){   // one opponent, so: what fighters have done against him, per fight
     const panel = el("section", {class:"panel"}, el("h2", {text:`What ${ng.opp} gives up per fight`}),
       el("p", {class:"sub", text:`What his opponents have done against him, per fight (${pd.g} fight${pd.g === 1 ? "" : "s"} this year, blended with last year's), next to the ${grpName()} average.`}));
@@ -793,6 +820,52 @@ function spark(hist){
 const legResult = l => l.unsupported ? l.manual : l.result;
 // what a winning ticket pays back; a bonus bet keeps only the winnings
 const payoutOf = b => b.stake && b.odds ? b.stake * ((b.odds > 0 ? 1 + b.odds / 100 : 1 + 100 / -b.odds) - (b.bonus ? 1 : 0)) : null;
+/* ---------- Cash-out advice ----------
+   A bet is worth its chance of hitting times what it pays. A cash-out offer above that is free money; below it you're
+   paying the book to take the risk off. Books build a cut into offers (usually 5-15%), so most offers sit below and
+   holding is the better long-run play. The exception: a long-shot ticket that's mostly come in, where a slightly low
+   offer still locks in a big profit and some people would rather take the sure thing. */
+const money = v => "$" + (Math.round(v * 100) / 100).toFixed(v >= 100 ? 0 : 2);
+function cashAdvice(b){
+  if (b.result) return null;
+  const pay = payoutOf(b), p = b.lc ? b.lc.chance : b.pre;
+  if (!pay || p == null) return {verdict: "info", text: "Add your stake and odds to see what this bet is worth now and whether a cash-out offer is worth taking."};
+  const fair = p * pay, cost = b.bonus ? 0 : b.stake, legs = b.type === "parlay" ? b.legs.length : 1;
+  const longShot = pay >= 4 * (b.stake || 1) || legs >= 3;
+  const offer = Number(b.offer) || 0;
+  if (!offer){
+    if (p >= 0.9) return {verdict: "hold", fair, text: `Worth about ${money(fair)} now (${pct(p)} to pay ${money(pay)}). It's very likely to hit, so hold unless an offer is at least ${money(fair)}.`};
+    return {verdict: "info", fair, text: `Worth about ${money(fair)} now (${pct(p)} to pay ${money(pay)}). Cashing out is smart only if the book offers at least that; enter the offer to check.`};
+  }
+  const gap = fair - offer, profit = offer - cost;
+  if (offer >= fair) return {verdict: "cash", fair, text: `Cash out: the ${money(offer)} offer beats the ${money(fair)} the bet is worth at ${pct(p)}.`};
+  if (offer >= 0.92 * fair && longShot && profit > 0)
+    return {verdict: "close", fair, text: `Close call: taking ${money(offer)} gives up ${money(gap)} of value but locks in ${money(profit)} profit. Hold for the best long-run return; cash out if the sure money matters more to you.`};
+  return {verdict: "hold", fair, text: `Hold: the ${money(offer)} offer is ${money(gap)} under the ${money(fair)} this bet is worth at ${pct(p)}.`};
+}
+function cashBox(b){
+  const a = cashAdvice(b); if (!a) return null;
+  const save = () => { const was = b.cashWas; b.cashWas = cashAdvice(b).verdict; saveTracked(); renderTracker();
+    if (b.cashWas === "cash" && was !== "cash") alertCash(b); };
+  const field = (label, key, ph) => el("label", {class:"cash-f"}, el("span", {text: label}),
+    el("input", {type:"number", inputmode:"decimal", step:"any", placeholder: ph, value: b[key] ?? "", "aria-label": label,
+      oninput: e => { b[key] = e.target.value === "" ? null : Number(e.target.value); if (key === "offer") b.offerAt = Date.now(); saveTracked(); },
+      onchange: save, onblur: () => setTimeout(renderTracker, 0)}));
+  const fields = [];
+  if (b.type !== "parlay" || b.stake == null || b.odds == null || b.manualPay){
+    b.manualPay = true;
+    fields.push(field("Stake $", "stake", "10"), field("Odds", "odds", "-110"));
+  }
+  fields.push(field("Cash-out offer $", "offer", a.fair ? a.fair.toFixed(2) : ""));
+  const stale = b.offer && b.offerAt && Date.now() - b.offerAt > 5 * 60e3 && b.live && b.live.state === "live";
+  return el("div", {class:`cash cash-${a.verdict}`},
+    el("p", {class:"cash-t", text: a.text + (stale ? " Offers move with every play, so update the offer before you decide." : "")}),
+    el("div", {class:"cash-in"}, ...fields));
+}
+function alertCash(b){
+  const msg = `Cash-out check: the offer on ${b.type === "parlay" ? "your parlay" : b.name + " " + (b.desc || "")} is now worth taking.`;
+  toast(msg); try { if ("Notification" in window && Notification.permission === "granted") new Notification("Trade Scale", {body: msg}); } catch(e){}
+}
 const MARKET_LABEL = {ml: "Moneyline", spread: "Spread", total: "Game total", teamtotal: "Team total"};
 const signed = v => (v > 0 ? "+" : "") + v;
 function legText(l){
@@ -833,7 +906,8 @@ function parlayRow(b){
         payout ? el("span", {class:"split", text: b.bonus ? `$${b.stake} bonus bet to win $${payout.toFixed(2)}` : `$${b.stake} to pay $${payout.toFixed(2)}`}) : null),
       el("div", {class:"trk-status"}, live && !b.result ? el("span", {class:"dot"}) : null,
         b.result ? (b.result === "won" ? "Won" : "Lost") : `${won} of ${b.legs.length} legs in${live ? ", games live" : b.start ? ", first game " + startText(b) : ""}`),
-      legsUl),
+      legsUl,
+      cashBox(b)),
     el("div", {class:"trk-num"}, el("span", {class:"num " + (b.result ? "" : chanceClass(ch)), text: b.result ? (b.result === "won" ? "✓" : "✕") : pct(ch)}),
       el("small", {text: b.result ? `pre-game ${pct(b.pre)}` : `was ${pct(b.pre)} pre-game`}), spark(b.hist)),
     el("button", {class:"x", text:"×", "aria-label":"Stop tracking this parlay", onclick: () => { tracked = tracked.filter(t => t.id !== b.id); saveTracked(); renderTracker(); }}));
@@ -852,7 +926,8 @@ function liveRow(b){
       el("div", {class:"trk-status"}, L.state === "live" && !b.result ? el("span", {class:"dot"}) : null, status, score ? el("span", {class:"split", text:"  " + score}) : null),
       cur != null ? el("div", {class:"trk-prog"}, el("div", {class:"bar"}, el("i", {style:`width:${Math.round(pctToLine * 100)}%`})),
         el("span", {text:`${fmt1(cur)} of ${b.line}${ch && ch.approx ? " (approx.)" : ""}`})) : null,
-      L.inBox === false && L.state === "live" ? el("small", {class:"split", text:"Not in the box score yet."}) : null),
+      L.inBox === false && L.state === "live" ? el("small", {class:"split", text:"Not in the box score yet."}) : null,
+      cashBox(b)),
     el("div", {class:"trk-num"},
       el("span", {class:"num " + (b.result ? "" : chanceClass(ch ? ch.chance : b.pre)), text: b.result ? (b.result === "won" ? "✓" : b.result === "lost" ? "✕" : "=") : ch ? pct(ch.chance) : pct(b.pre)}),
       el("small", {text: ch && !b.result ? `was ${pct(b.pre)} pre-game` : b.result ? `pre-game ${pct(b.pre)}` : "pre-game chance"}),
@@ -862,6 +937,7 @@ function liveRow(b){
 }
 function renderTracker(){
   const host = $("tracker"); if (!host) return;
+  if (host.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;   // don't wipe a number mid-typing; blur redraws
   host.innerHTML = "";
   if (!tracked.length){ host.hidden = true; return; }
   host.hidden = false;
@@ -873,7 +949,7 @@ function renderTracker(){
     el("div", {class:"bar-row"}, alertsBtn,
       el("button", {class:"btn", text:"Refresh", onclick: () => { LIVE.clearCache(); pollSoon(0); }}),
       anyDone ? el("button", {class:"btn", text:"Clear finished", onclick: () => { tracked = tracked.filter(b => !(b.result || (b.live && b.live.state === "final"))); saveTracked(); renderTracker(); }}) : null)),
-    el("p", {class:"sub", text:"Live chances update every 30 seconds while a game is on. They start from the pre-game projection and lean more on tonight's pace as the game goes on."}));
+    el("p", {class:"sub", text:"Live chances update every 30 seconds while a game is on. They start from the pre-game projection and lean more on tonight's pace as the game goes on. Each bet also shows what it's worth right now (its live chance times the payout): a cash-out offer above that is worth taking, one below it usually isn't."}));
   const ul = el("ul", {class:"trk-list"});
   tracked.forEach(b => ul.append(liveRow(b)));
   host.append(ul);
@@ -965,6 +1041,7 @@ async function poll(){
   clearTimeout(liveTimer);
   if (document.hidden){ liveTimer = setTimeout(poll, 60000); return; }
   await Promise.all(tracked.filter(b => b.type === "parlay" ? !b.result : !(b.result && b.live && b.live.state === "final")).map(b => b.type === "parlay" ? updateParlay(b) : updateBet(b)));
+  tracked.forEach(b => { const a = cashAdvice(b), v = a && a.verdict; if (v === "cash" && b.cashWas !== "cash") alertCash(b); b.cashWas = v; });
   saveTracked(); renderTracker();
   await refreshPlayerLive();
   const live = tracked.some(b => b.live && b.live.state === "live") || (liveHost && liveHost.querySelector(".is-live"));

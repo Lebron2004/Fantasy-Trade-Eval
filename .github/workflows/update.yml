@@ -33,18 +33,35 @@ jobs:
       - name: Pull latest players, values and team changes
         run: python scripts/update_players.py
 
-      - name: Build props data (NFL, NBA, NHL, MLB, college football and basketball, UFC)
+      # finished soccer matches never change, so their lineups are fetched once and carried between runs
+      - name: Restore soccer match cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache
+          key: props-cache-${{ github.run_id }}
+          restore-keys: props-cache-
+
+      - name: Build props data (NFL, NBA, NHL, MLB, college football and basketball, UFC, soccer, cricket)
         continue-on-error: true
         run: |
           pip install --quiet pandas pyarrow
           python scripts/update_props.py || echo "NFL props failed"
           python scripts/update_props_more.py || echo "NBA, NHL or MLB props failed"
           python scripts/update_props_college.py || echo "College props failed"
-          python scripts/update_props_ufc.py
+          python scripts/update_props_ufc.py || echo "UFC props failed"
+          python scripts/update_props_soccer.py || echo "Soccer props failed"
+          python scripts/update_props_cricket.py
+
+      - name: Save soccer match cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache
+          key: props-cache-${{ github.run_id }}
 
       - name: Train the prop model on past games
         continue-on-error: true
-        timeout-minutes: 50
+        timeout-minutes: 70
         run: |
           pip install --quiet lightgbm
           python scripts/train_props_model.py

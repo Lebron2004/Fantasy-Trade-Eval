@@ -37,13 +37,19 @@ MARKETS = {
     "cbb": {"pts": 9.5, "reb": 3.5, "ast": 2.5, "pts+reb+ast": 14.5, "pts+reb": 12.5, "pts+ast": 11.5, "fg3": 1.5},
     # fights: yes/no props have no role minimum; strikes and takedowns need a fighter who actually throws or wrestles
     "ufc": {"win": 0, "dist": 0, "rnd": 0.5, "sig": 19.5, "tdl": 0.5},
+    # soccer: shot, foul and save counts; goals, assists and cards price so far under that they'd crowd out everything else
+    "soc": {"sot": 0.5, "sh": 1.5, "fc": 0.5, "fs": 0.5, "sv": 1.5},
+    "cri": {"r": 14.5, "f4": 1.5, "s6": 0.5, "f4+s6": 1.5, "wk": 0.5, "rc": 20.5},
 }
 # props about the whole fight, not one fighter: both fighters' pages carry the same bet, so keep one per bout
 FIGHT_LEVEL = {"dist", "rnd"}
 COLLEGE = {"cfb", "cbb"}
 SKIP_GROUPS = {"nhl": {"G"}, "mlb": {"RP"}}   # no starting-goalie data; relievers' roles change night to night
 # a player whose last game is older than this (vs the latest game in the data) is probably hurt or out of the lineup
-STALE_DAYS = {"nfl": 16, "nba": 10, "nhl": 10, "mlb": 10, "cfb": 16, "cbb": 10, "ufc": 100000}   # fighters go months between fights
+STALE_DAYS = {"nfl": 16, "nba": 10, "nhl": 10, "mlb": 10, "cfb": 16, "cbb": 10, "ufc": 100000,
+              "soc": 21, "cri": 400}   # cricketers go months between series and leagues   # fighters go months between fights
+# no injury or lineup data: a player who sat out this many of his team's latest matches is probably hurt or dropped
+MISSED = {"soc": 2, "cri": 1}
 TOP_PICKS = 12
 TOP_OVERS = 6     # unders win most props, so the best overs get their own short list
 PARLAY_POOL = 24
@@ -130,6 +136,12 @@ def build_sport(sport):
     team_last = {}
     for doc, log in docs:
         team_last[doc["team"]] = max(team_last.get(doc["team"], ""), log[-1]["d"])
+    # each team's latest match dates, from its players' logs (a cricketer's log mixes his franchise and his country)
+    team_dates = {}
+    for doc, log in docs:
+        for g in log[-12:]:
+            if g.get("tm"):
+                team_dates.setdefault(g["tm"], set()).add(g["d"])
     cutoff = (date.fromisoformat(latest) - timedelta(days=STALE_DAYS[sport])).isoformat() if season_on else ""
 
     cands, overs = [], []
@@ -143,6 +155,11 @@ def build_sport(sport):
             continue
         if sport in COLLEGE and season_on and log[-1]["d"] < team_last.get(doc["team"], ""):
             continue      # sat out his team's latest game: likely hurt, and college teams post no injury tags here
+        if sport in MISSED and season_on:
+            recent = sorted(team_dates.get(doc["team"], ()))[-MISSED[sport]:]
+            mine_d = {g["d"] for g in log if g.get("tm") == doc["team"]}
+            if recent and not mine_d & set(recent):
+                continue
         if sport == "mlb" and grp == "SP" and doc["name"] not in starters:
             continue
         ng = teams[doc["team"]]
@@ -222,7 +239,7 @@ def build_sport(sport):
 
 def main():
     result = {"updated": datetime.now(timezone.utc).isoformat(timespec="minutes"), "date": TODAY.isoformat(), "sports": {}}
-    for sport in ("nfl", "nba", "nhl", "mlb", "cfb", "cbb", "ufc"):
+    for sport in ("nfl", "nba", "nhl", "mlb", "cfb", "cbb", "ufc", "soc", "cri"):
         try:
             s = build_sport(sport)
         except Exception as e:

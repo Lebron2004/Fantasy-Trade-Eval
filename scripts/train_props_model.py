@@ -33,6 +33,7 @@ RNG = np.random.default_rng(7)
 # Mirrors CFG in site/assets/props.js: the props offered per position group and how each is priced.
 NBA_ALL = ["pts", "reb", "ast", "pts+reb+ast", "pts+reb", "pts+ast", "reb+ast", "fg3", "stl", "blk", "stl+blk", "tov", "min"]
 UFC_ALL = ["win", "ko", "sub", "dec", "dist", "rnd", "sig", "tdl", "kd"]
+SOC_ATT = ["sot", "sh", "g", "a", "g+a", "fc", "fs", "yc"]
 SPORTS = {
     "nfl": {"props": {"QB": ["pyd", "ptd", "cmp", "att", "int", "ruyd", "pyd+ruyd", "td", "ppr"],
                       "RB": ["ruyd", "car", "ruyd+reyd", "rec", "reyd", "td", "ppr"],
@@ -71,6 +72,14 @@ SPORTS = {
             "count": ["win", "ko", "sub", "dec", "dist", "tdl", "kd"], "binary": ["win", "ko", "sub", "dec", "dist"],
             "floats": ["rnd"], "max_default": {"rnd": 2.5},
             "cv": {"sig": .6, "rnd": .4}, "disp": {"tdl": 1.8, "kd": 1.3}, "K": 3, "damp": (0.5, 0.25), "rest": None, "usage": ["rnd"]},
+    "soc": {"props": {"F": SOC_ATT, "M": SOC_ATT, "D": ["sh", "sot", "fc", "fs", "g", "yc"], "G": ["sv", "gc"]},
+            "count": ["g", "a", "sh", "sot", "fc", "fs", "yc", "sv", "gc"], "floats": [],
+            "cv": {}, "disp": {"sh": 1.25, "sot": 1.1, "fc": 1.2, "fs": 1.25, "sv": 1.1}, "K": 4, "damp": (0.4, 0.2), "rest": None,
+            "usage": ["min"]},
+    "cri": {"props": {"BAT": ["r", "f4", "s6", "f4+s6", "bf"], "AR": ["r", "wk", "f4", "s6", "rc"], "BOWL": ["wk", "rc", "bb"]},
+            "count": ["f4", "s6", "wk", "ct"], "floats": [],
+            "cv": {"r": .85, "bf": .75, "rc": .35, "bb": .25}, "disp": {"f4": 1.9, "s6": 1.9, "f4+s6": 2.1, "wk": 1.15},
+            "K": 4, "damp": (0.4, 0.2), "rest": None, "usage": ["bf", "bb"]},
 }
 
 # Features, grouped into the plain-language factors the page shows.

@@ -191,7 +191,9 @@ def build_sport(sport, df, cfg, nxt, season_cur, season_names, extra_players=Non
                 row["st"] = int(bool(r.starter))
             for k, col in cfg.get("extra", {}).items():   # optional per-game context: week, spread, total, rounds
                 v = getattr(r, col)
-                if pd.notna(v):
+                if isinstance(v, str):
+                    row[k] = v
+                elif pd.notna(v):
                     row[k] = float(v) if isinstance(v, float) and not float(v).is_integer() else int(v)
             mp = me = 0
             for i, m in enumerate(mates):
