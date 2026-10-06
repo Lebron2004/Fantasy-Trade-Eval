@@ -444,3 +444,12 @@ li.pick .tag{font-family:var(--display);font-weight:700;font-size:.78rem;padding
 .pick-line{font-weight:600}
 li.pick small{display:block;color:var(--muted);font-size:.84rem}
 @media (max-width:560px){.parlays,.picks{grid-template-columns:1fr}}
+/* cash-out advice on tracked bets */
+.cash{grid-column:1 / -1;border-radius:10px;padding:8px 10px;background:var(--paper);border-left:4px solid var(--line);font-size:.9rem}
+.cash-cash{border-left-color:var(--get);background:var(--get-soft)}
+.cash-close{border-left-color:var(--gold)}
+.cash-hold{border-left-color:var(--brand)}
+.cash-t{margin:0 0 6px}
+.cash-in{display:flex;flex-wrap:wrap;gap:8px}
+.cash-f{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.85rem}
+.cash-f input{width:6.5rem;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;padding:4px 6px;font-size:.9rem}

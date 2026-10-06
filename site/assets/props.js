@@ -793,6 +793,52 @@ function spark(hist){
 const legResult = l => l.unsupported ? l.manual : l.result;
 // what a winning ticket pays back; a bonus bet keeps only the winnings
 const payoutOf = b => b.stake && b.odds ? b.stake * ((b.odds > 0 ? 1 + b.odds / 100 : 1 + 100 / -b.odds) - (b.bonus ? 1 : 0)) : null;
+/* ---------- Cash-out advice ----------
+   A bet is worth its chance of hitting times what it pays. A cash-out offer above that is free money; below it you're
+   paying the book to take the risk off. Books build a cut into offers (usually 5-15%), so most offers sit below and
+   holding is the better long-run play. The exception: a long-shot ticket that's mostly come in, where a slightly low
+   offer still locks in a big profit and some people would rather take the sure thing. */
+const money = v => "$" + (Math.round(v * 100) / 100).toFixed(v >= 100 ? 0 : 2);
+function cashAdvice(b){
+  if (b.result) return null;
+  const pay = payoutOf(b), p = b.lc ? b.lc.chance : b.pre;
+  if (!pay || p == null) return {verdict: "info", text: "Add your stake and odds to see what this bet is worth now and whether a cash-out offer is worth taking."};
+  const fair = p * pay, cost = b.bonus ? 0 : b.stake, legs = b.type === "parlay" ? b.legs.length : 1;
+  const longShot = pay >= 4 * (b.stake || 1) || legs >= 3;
+  const offer = Number(b.offer) || 0;
+  if (!offer){
+    if (p >= 0.9) return {verdict: "hold", fair, text: `Worth about ${money(fair)} now (${pct(p)} to pay ${money(pay)}). It's very likely to hit, so hold unless an offer is at least ${money(fair)}.`};
+    return {verdict: "info", fair, text: `Worth about ${money(fair)} now (${pct(p)} to pay ${money(pay)}). Cashing out is smart only if the book offers at least that; enter the offer to check.`};
+  }
+  const gap = fair - offer, profit = offer - cost;
+  if (offer >= fair) return {verdict: "cash", fair, text: `Cash out: the ${money(offer)} offer beats the ${money(fair)} the bet is worth at ${pct(p)}.`};
+  if (offer >= 0.92 * fair && longShot && profit > 0)
+    return {verdict: "close", fair, text: `Close call: taking ${money(offer)} gives up ${money(gap)} of value but locks in ${money(profit)} profit. Hold for the best long-run return; cash out if the sure money matters more to you.`};
+  return {verdict: "hold", fair, text: `Hold: the ${money(offer)} offer is ${money(gap)} under the ${money(fair)} this bet is worth at ${pct(p)}.`};
+}
+function cashBox(b){
+  const a = cashAdvice(b); if (!a) return null;
+  const save = () => { const was = b.cashWas; b.cashWas = cashAdvice(b).verdict; saveTracked(); renderTracker();
+    if (b.cashWas === "cash" && was !== "cash") alertCash(b); };
+  const field = (label, key, ph) => el("label", {class:"cash-f"}, el("span", {text: label}),
+    el("input", {type:"number", inputmode:"decimal", step:"any", placeholder: ph, value: b[key] ?? "", "aria-label": label,
+      oninput: e => { b[key] = e.target.value === "" ? null : Number(e.target.value); if (key === "offer") b.offerAt = Date.now(); saveTracked(); },
+      onchange: save, onblur: () => setTimeout(renderTracker, 0)}));
+  const fields = [];
+  if (b.type !== "parlay" || b.stake == null || b.odds == null || b.manualPay){
+    b.manualPay = true;
+    fields.push(field("Stake $", "stake", "10"), field("Odds", "odds", "-110"));
+  }
+  fields.push(field("Cash-out offer $", "offer", a.fair ? a.fair.toFixed(2) : ""));
+  const stale = b.offer && b.offerAt && Date.now() - b.offerAt > 5 * 60e3 && b.live && b.live.state === "live";
+  return el("div", {class:`cash cash-${a.verdict}`},
+    el("p", {class:"cash-t", text: a.text + (stale ? " Offers move with every play, so update the offer before you decide." : "")}),
+    el("div", {class:"cash-in"}, ...fields));
+}
+function alertCash(b){
+  const msg = `Cash-out check: the offer on ${b.type === "parlay" ? "your parlay" : b.name + " " + (b.desc || "")} is now worth taking.`;
+  toast(msg); try { if ("Notification" in window && Notification.permission === "granted") new Notification("Trade Scale", {body: msg}); } catch(e){}
+}
 const MARKET_LABEL = {ml: "Moneyline", spread: "Spread", total: "Game total", teamtotal: "Team total"};
 const signed = v => (v > 0 ? "+" : "") + v;
 function legText(l){
@@ -833,7 +879,8 @@ function parlayRow(b){
         payout ? el("span", {class:"split", text: b.bonus ? `$${b.stake} bonus bet to win $${payout.toFixed(2)}` : `$${b.stake} to pay $${payout.toFixed(2)}`}) : null),
       el("div", {class:"trk-status"}, live && !b.result ? el("span", {class:"dot"}) : null,
         b.result ? (b.result === "won" ? "Won" : "Lost") : `${won} of ${b.legs.length} legs in${live ? ", games live" : b.start ? ", first game " + startText(b) : ""}`),
-      legsUl),
+      legsUl,
+      cashBox(b)),
     el("div", {class:"trk-num"}, el("span", {class:"num " + (b.result ? "" : chanceClass(ch)), text: b.result ? (b.result === "won" ? "✓" : "✕") : pct(ch)}),
       el("small", {text: b.result ? `pre-game ${pct(b.pre)}` : `was ${pct(b.pre)} pre-game`}), spark(b.hist)),
     el("button", {class:"x", text:"×", "aria-label":"Stop tracking this parlay", onclick: () => { tracked = tracked.filter(t => t.id !== b.id); saveTracked(); renderTracker(); }}));
@@ -852,7 +899,8 @@ function liveRow(b){
       el("div", {class:"trk-status"}, L.state === "live" && !b.result ? el("span", {class:"dot"}) : null, status, score ? el("span", {class:"split", text:"  " + score}) : null),
       cur != null ? el("div", {class:"trk-prog"}, el("div", {class:"bar"}, el("i", {style:`width:${Math.round(pctToLine * 100)}%`})),
         el("span", {text:`${fmt1(cur)} of ${b.line}${ch && ch.approx ? " (approx.)" : ""}`})) : null,
-      L.inBox === false && L.state === "live" ? el("small", {class:"split", text:"Not in the box score yet."}) : null),
+      L.inBox === false && L.state === "live" ? el("small", {class:"split", text:"Not in the box score yet."}) : null,
+      cashBox(b)),
     el("div", {class:"trk-num"},
       el("span", {class:"num " + (b.result ? "" : chanceClass(ch ? ch.chance : b.pre)), text: b.result ? (b.result === "won" ? "✓" : b.result === "lost" ? "✕" : "=") : ch ? pct(ch.chance) : pct(b.pre)}),
       el("small", {text: ch && !b.result ? `was ${pct(b.pre)} pre-game` : b.result ? `pre-game ${pct(b.pre)}` : "pre-game chance"}),
@@ -862,6 +910,7 @@ function liveRow(b){
 }
 function renderTracker(){
   const host = $("tracker"); if (!host) return;
+  if (host.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;   // don't wipe a number mid-typing; blur redraws
   host.innerHTML = "";
   if (!tracked.length){ host.hidden = true; return; }
   host.hidden = false;
@@ -873,7 +922,7 @@ function renderTracker(){
     el("div", {class:"bar-row"}, alertsBtn,
       el("button", {class:"btn", text:"Refresh", onclick: () => { LIVE.clearCache(); pollSoon(0); }}),
       anyDone ? el("button", {class:"btn", text:"Clear finished", onclick: () => { tracked = tracked.filter(b => !(b.result || (b.live && b.live.state === "final"))); saveTracked(); renderTracker(); }}) : null)),
-    el("p", {class:"sub", text:"Live chances update every 30 seconds while a game is on. They start from the pre-game projection and lean more on tonight's pace as the game goes on."}));
+    el("p", {class:"sub", text:"Live chances update every 30 seconds while a game is on. They start from the pre-game projection and lean more on tonight's pace as the game goes on. Each bet also shows what it's worth right now (its live chance times the payout): a cash-out offer above that is worth taking, one below it usually isn't."}));
   const ul = el("ul", {class:"trk-list"});
   tracked.forEach(b => ul.append(liveRow(b)));
   host.append(ul);
@@ -965,6 +1014,7 @@ async function poll(){
   clearTimeout(liveTimer);
   if (document.hidden){ liveTimer = setTimeout(poll, 60000); return; }
   await Promise.all(tracked.filter(b => b.type === "parlay" ? !b.result : !(b.result && b.live && b.live.state === "final")).map(b => b.type === "parlay" ? updateParlay(b) : updateBet(b)));
+  tracked.forEach(b => { const a = cashAdvice(b), v = a && a.verdict; if (v === "cash" && b.cashWas !== "cash") alertCash(b); b.cashWas = v; });
   saveTracked(); renderTracker();
   await refreshPlayerLive();
   const live = tracked.some(b => b.live && b.live.state === "live") || (liveHost && liveHost.querySelector(".is-live"));
