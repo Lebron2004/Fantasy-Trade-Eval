@@ -32,18 +32,3 @@ jobs:
 
       - name: Cricket reads Cricsheet and ESPN's schedule (writes nothing)
         run: python scripts/update_props_cricket.py --check
-
-      - name: Full cricket build, model and best bets (temporary end-to-end run)
-        run: |
-          pip install --quiet pyarrow lightgbm
-          python scripts/update_props_cricket.py
-          python scripts/train_props_model.py cri
-          python scripts/best_bets.py | grep -E "cri"
-          python - <<'PY'
-          import json
-          s = json.load(open("site/data/props/best.json"))["sports"].get("cri", {})
-          print(s.get("slate"), s.get("games"), s.get("note"))
-          for c in s.get("picks", [])[:8]: print("  ", c["name"], c["team"], c["side"], c["line"], c["key"], c["p"])
-          i = json.load(open("site/data/props/cri/index.json"))
-          print(len(i["players"]), "players;", i["players"][:8])
-          PY
