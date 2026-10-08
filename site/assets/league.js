@@ -4,34 +4,7 @@
 const {SPORTS, store, settings, el, adjusted, packageScore, injTag, toItem} = TS;
 const $ = id => document.getElementById(id);
 
-/* ---------- Lineup rules per sport ---------- */
-const DEFAULT_SLOTS = {
-  nfl: "QB, RB, RB, WR, WR, TE, FLEX",
-  nba: "PG, SG, G, SF, PF, F, C, UTIL, UTIL, UTIL",
-  mlb: "C, 1B, 2B, 3B, SS, OF, OF, OF, UTIL, SP, SP, SP, SP, SP, RP, RP",
-  nhl: "C, C, LW, LW, RW, RW, D, D, D, D, G, G"
-};
-const GROUPS = {nfl:["QB","RB","WR","TE","K","DEF"], nba:["PG","SG","SF","PF","C"],
-                mlb:["C","1B","2B","3B","SS","OF","SP","RP"], nhl:["C","LW","RW","D","G"]};
-// Flex slots: which positions can fill them. "*" = anyone, "H" = any hitter, "S" = any skater.
-const FLEX = {
-  nfl: {FLEX:["RB","WR","TE"], SUPER_FLEX:["QB","RB","WR","TE"], REC_FLEX:["WR","TE"], WRRB_FLEX:["WR","RB"]},
-  nba: {G:["PG","SG","G"], F:["SF","PF","F"], UTIL:"*", "SG/SF":["SG","SF"], "G/F":["PG","SG","SF","PF","G","F"],
-        "PF/C":["PF","C"], "F/C":["SF","PF","C","F"]},
-  mlb: {UTIL:"H", DH:"H", P:["SP","RP","P"], OF:["OF","LF","CF","RF"], CI:["1B","3B"], MI:["2B","SS"], IF:["1B","2B","3B","SS"]},
-  nhl: {UTIL:"S", F:["C","LW","RW"], W:["LW","RW"]}
-};
-const SKIP_SLOTS = new Set(["BN","IR","TAXI","DL","LB","DB","IDP_FLEX","DE","DT","CB","S","ILB","OLB"]);
-function accepts(sport, slot, p){
-  const f = FLEX[sport][slot];
-  if (f === "*") return true;
-  if (f === "H") return p.elig.some(e => !["SP","RP","P"].includes(e));
-  if (f === "S") return !p.elig.includes("G");
-  if (f) return p.elig.some(e => f.includes(e));
-  return p.elig.includes(slot);
-}
-const slotWidth = (sport, slot) => { const f = FLEX[sport][slot]; return typeof f === "string" ? 99 : f ? f.length : 1; };
-const parseSlots = txt => txt.toUpperCase().split(/[\s,]+/).map(s => s.trim()).filter(s => s && !SKIP_SLOTS.has(s));
+const {DEFAULT_SLOTS, GROUPS, FLEX, SKIP_SLOTS, accepts, slotWidth, parseSlots} = TS.LINEUP;
 
 /* ---------- State ---------- */
 let leagues = store.get("tradescale:leagues") || [];

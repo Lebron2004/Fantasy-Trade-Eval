@@ -97,6 +97,123 @@ function renderScale(){
   $("panL").style.transformOrigin = "44px 76px";  $("panL").style.transform = `rotate(${-angle}deg)`;
   $("panR").style.transformOrigin = "296px 76px"; $("panR").style.transform = `rotate(${-angle}deg)`;
   $("saveBtn").disabled = !(t.send.length && t.get.length);
+  renderReport();
+}
+/* ---------- Trade report: a letter grade, a plain ruling, and what the deal does to your lineup ---------- */
+// The synced or hand-built league for this sport (from My league), with your team and the partner holding the players you get.
+function leagueContext(sport, t){
+  const pool = TS.pools[sport]; if (!pool) return null;
+  const leagues = (store.get("tradescale:leagues") || []).filter(l => l.sport === sport);
+  const L = leagues.find(l => l.id === (store.get("tradescale:active-league") || {})[sport]) || leagues[0];
+  if (!L || !L.slots || !L.teams) return null;
+  const me = L.teams.find(x => x.id === L.myTeamId); if (!me) return null;
+  const resolve = ids => ids.map(id => pool.byId.get(String(id))).filter(Boolean);
+  const mineIds = new Set(me.players.map(String));
+  if (!t.send.some(p => mineIds.has(String(p.id)))) return null;   // this trade isn't from your synced team
+  const getIds = new Set(t.get.map(p => String(p.id)));
+  const partner = L.teams.find(x => x.id !== me.id && x.players.some(id => getIds.has(String(id)))) || null;
+  return {L, me, roster: resolve(me.players), partner, partnerRoster: partner ? resolve(partner.players) : null};
+}
+function lineupSwap(sport, slots, roster, out, inc){
+  const val = p => adjusted(p, sport), outIds = new Set(out.map(p => String(p.id)));
+  const before = TS.LINEUP.bestLineup(sport, slots, roster, val);
+  const after = TS.LINEUP.bestLineup(sport, slots, roster.filter(p => !outIds.has(String(p.id))).concat(inc), val);
+  const b = new Set(before.starters.filter(Boolean).map(p => String(p.id))), a = new Set(after.starters.filter(Boolean).map(p => String(p.id)));
+  return {before, after, gain: after.total - before.total,
+          ins: after.starters.map((p, i) => p && !b.has(String(p.id)) ? {p, slot: slots[i]} : null).filter(Boolean),
+          outs: before.starters.map((p, i) => p && !a.has(String(p.id)) ? {p, slot: slots[i]} : null).filter(Boolean)};
+}
+const GRADES = [[14,"A+","Massive win for you"],[9,"A","Clear win for you"],[5,"A-","Solid win for you"],[2,"B+","Slight win for you"],
+  [-2,"B","Even trade"],[-5,"B-","Slight overpay"],[-9,"C","You're overpaying"],[-14,"D","Big overpay"],[-Infinity,"F","Lopsided against you"]];
+function tradeReport(){
+  const t = trade(), sport = state.sport;
+  if (!t.send.length || !t.get.length) return null;
+  const s = packageScore(t.send, sport), g = packageScore(t.get, sport);
+  const valuePct = (g - s) / Math.max(g, s, 1) * 100;
+  const factors = [];
+  let score = valuePct;
+  factors.push({tone: valuePct >= 3 ? "good" : valuePct <= -3 ? "bad" : "even", label: "Trade value",
+    text: Math.abs(valuePct) < 3 ? "Close to even on value." : `You ${valuePct > 0 ? "get" : "give"} about ${Math.round(Math.abs(valuePct))}% more value.`});
+
+  const ctx = leagueContext(sport, t);
+  let lineup = null;
+  if (ctx){
+    lineup = lineupSwap(sport, ctx.L.slots, ctx.roster, t.send, t.get);
+    const pct = lineup.gain / Math.max(lineup.before.total, 1) * 100;
+    // with real rosters, the starting lineup counts for more than raw value: bench depth rarely scores
+    score = valuePct * 0.6 + Math.max(-15, Math.min(15, pct * 5));
+    factors.push({tone: pct >= 0.5 ? "good" : pct <= -0.5 ? "bad" : "even", label: "Your lineup",
+      text: Math.abs(lineup.gain) < 0.5 ? "Your starting lineup stays about the same." :
+        `Your starting lineup gets ${Math.abs(Math.round(pct * 10) / 10)}% ${lineup.gain > 0 ? "stronger" : "weaker"}.`});
+    if (ctx.partner){
+      lineup.partner = ctx.partner.name;
+      lineup.theirs = lineupSwap(sport, ctx.L.slots, ctx.partnerRoster, t.get, t.send);
+      const theirPct = lineup.theirs.gain / Math.max(lineup.theirs.before.total, 1) * 100;
+      if (theirPct <= -4) factors.push({tone:"even", label:"Will they say yes?", text:`${ctx.partner.name}'s starting lineup gets ${Math.round(-theirPct)}% weaker, so expect pushback.`});
+      else if (theirPct >= 1) factors.push({tone:"good", label:"Will they say yes?", text:`It helps ${ctx.partner.name}'s lineup too, so it's an easy sell.`});
+    }
+  }
+
+  const lean = list => { const x = list.map(p => TS.signalOf(p, sport)).filter(Boolean); return x.length ? x.reduce((a, y) => a + y.s, 0) / x.length : null; };
+  const lg = lean(t.get), ls = lean(t.send);
+  if (lg != null || ls != null){
+    const edge = (lg || 0) - (ls || 0);
+    score += Math.max(-4, Math.min(4, edge * 6));
+    if (Math.abs(edge) >= 0.2) factors.push({tone: edge > 0 ? "good" : "bad", label: "Trained model",
+      text: edge > 0 ? "Rates the players you get above their trade value: you're buying low." : "Rates the players you send above their trade value: you're selling low."});
+  }
+  const hurt = t.get.filter(p => TS.HURT.has(p.inj)), hurtOut = t.send.filter(p => TS.HURT.has(p.inj));
+  if (hurt.length){ score -= 3 * hurt.length; factors.push({tone:"bad", label:"Health", text: `${hurt.map(p => p.name).join(", ")} ${hurt.length > 1 ? "are" : "is"} hurt right now.`}); }
+  else if (hurtOut.length) factors.push({tone:"good", label:"Health", text: `You move ${hurtOut.map(p => p.name).join(", ")} while ${hurtOut.length > 1 ? "they're" : "he's"} hurt.`});
+  if (settings.mode === "dynasty"){
+    const age = list => { const a = list.map(p => TS.ageOf(p.born)).filter(x => x != null); return a.length ? a.reduce((x, y) => x + y, 0) / a.length : null; };
+    const ag = age(t.get), as = age(t.send);
+    if (ag != null && as != null && Math.abs(ag - as) >= 2)
+      factors.push({tone: ag < as ? "good" : "bad", label:"Age", text: `You get ${ag < as ? "younger" : "older"} by about ${Math.round(Math.abs(ag - as))} years on average.`});
+  }
+  const spots = t.get.length - t.send.length;
+  if (spots > 0) factors.push({tone:"even", label:"Roster", text:`You'll need ${spots} open roster spot${spots > 1 ? "s" : ""}.`});
+  if (spots < 0 && valuePct < -2) factors.push({tone:"good", label:"Roster", text:`Consolidating ${t.send.length} for ${t.get.length} frees ${-spots} spot${spots < -1 ? "s" : ""} for a waiver pickup.`});
+
+  const [, grade, ruling] = GRADES.find(([cut]) => score >= cut);
+  const near = Math.abs(score) < 2 && Math.abs(valuePct) >= 0.5 ? (score > 0 ? ", leans your way" : ", leans their way") : "";
+  return {grade, ruling: ruling + near, score, valuePct, lineup, factors, tone: grade[0] === "A" || grade === "B+" ? "good" : grade === "B" ? "even" : "bad"};
+}
+function breakdown(list, sport, total){
+  const bar = el("div", {class:"vb-bar"});
+  list.forEach(p => {
+    const v = packageScore([p], sport), w = total > 0 ? v / total * 100 : 0;
+    bar.append(el("span", {style:`flex:${Math.max(w, 0.5)}`, title:`${p.name}: ${Math.round(v)}`}, w >= 18 ? p.name.split(" ").slice(-1)[0] : ""));
+  });
+  return bar;
+}
+function renderReport(){
+  const host = $("report"), r = tradeReport(), t = trade(), sport = state.sport;
+  host.hidden = !r; host.innerHTML = "";
+  const chip = $("gradeChip"); chip.hidden = !r;
+  if (!r) return;
+  chip.className = "grade-chip g-" + r.tone; chip.textContent = ""; chip.append(el("b", {text:r.grade}), ` ${r.ruling} · see why`);
+  const s = packageScore(t.send, sport), g = packageScore(t.get, sport), max = Math.max(s, g, 1);
+  const vrow = (lbl, list, tot, cls) => el("div", {class:"vb-row " + cls}, el("span", {class:"vb-l", text:lbl}),
+    el("div", {class:"vb-track"}, el("div", {style:`width:${tot / max * 100}%`}, breakdown(list, sport, tot))), el("b", {text: Math.round(tot)}));
+  const head = el("div", {class:"rep-head"},
+    el("div", {class:"grade g-" + r.tone, "aria-label":`Grade ${r.grade}`, text:r.grade}),
+    el("div", {}, el("div", {class:"rep-kicker", text:"Trade grade for your side"}), el("div", {class:"rep-ruling", text:r.ruling}),
+      el("p", {class:"split", text: r.lineup ? `Graded on value, what it does to your starting lineup in ${r.lineup.partner ? "your league" : "your synced team"}, the trained model, and health.` :
+        "Graded on value, the trained model, and health. Sync your league on My league to grade it against your actual lineup too."})));
+  const values = el("div", {class:"vb"}, vrow("You send", t.send, s, "send"), vrow("You get", t.get, g, "get"));
+  const facts = el("ul", {class:"rep-f"});
+  r.factors.forEach(f => facts.append(el("li", {class:"f-" + f.tone}, el("b", {text:f.label}), " ", f.text)));
+  host.append(head, values, facts);
+  if (r.lineup && (r.lineup.ins.length || r.lineup.outs.length)){
+    const L = r.lineup, fmt = n => (n > 0 ? "+" : "") + Math.round(n);
+    const side = (title, sw) => el("div", {class:"lu-chg"}, el("h3", {}, title, el("span", {class: sw.gain >= 0 ? "up" : "down", text:` ${fmt(sw.gain)}`})),
+      el("ul", {}, ...sw.ins.map(x => el("li", {class:"in"}, `${x.slot}: ${x.p.name} starts`)),
+        ...sw.outs.map(x => el("li", {class:"out"}, `${x.slot}: ${x.p.name} ${t.send.some(p => String(p.id) === String(x.p.id)) || t.get.some(p => String(p.id) === String(x.p.id)) ? "leaves" : "goes to the bench"}`))));
+    const wrap = el("div", {class:"lu-chgs"}, side("Your starting lineup", L));
+    if (L.theirs) wrap.append(side(`${L.partner}'s starting lineup`, L.theirs));
+    host.append(wrap);
+  }
 }
 function renderMoves(){
   $("movesH").textContent = `Recent ${TS.sportName(state.sport).toLowerCase()} team changes`;
@@ -184,6 +301,27 @@ function tradePrompt(q){
   const fmt = {ppr:"PPR", half:"half PPR", std:"standard"}[settings.scoring];
   const lg = `${settings.mode}${sp === "nfl" ? `, ${fmt} scoring, ${settings.qb === "sf" ? "superflex" : "1 QB"}` : ""}`;
   const lines = list => list.length ? list.map(p => "- " + (p.custom ? `${p.name} (custom player, value ${p.value})` : TS.aiLine(p, sp))).join("\n") : "- (nobody yet)";
+  const r = tradeReport(), ctx = leagueContext(sp, t);
+  const short = p => `${p.name} (${p.pos}${TS.posRank(p, sp) ? " " + TS.posRank(p, sp) : ""}, ${Math.round(adjusted(p, sp))}${p.inj ? ", " + p.inj : ""})`;
+  const roster = (title, players) => {
+    const lu = TS.LINEUP.bestLineup(sp, ctx.L.slots, players, p => adjusted(p, sp));
+    return `${title} starters: ${lu.starters.map((p, i) => `${ctx.L.slots[i]} ${p ? short(p) : "(empty)"}`).join("; ")}
+${title} bench: ${lu.bench.slice(0, 12).map(short).join("; ") || "(none)"}`;
+  };
+  let extra = "";
+  if (r){
+    extra += `\nThe app's trade grade for my side: ${r.grade} (${r.ruling}). Package values: I send ${Math.round(packageScore(t.send, sp))}, I get ${Math.round(packageScore(t.get, sp))}.
+Factors: ${r.factors.map(f => `${f.label}: ${f.text}`).join(" ")}`;
+    if (r.lineup){
+      const L = r.lineup, ch = sw => [...sw.ins.map(x => `${x.p.name} starts at ${x.slot}`), ...sw.outs.map(x => `${x.p.name} out of ${x.slot}`)].join(", ") || "no change";
+      extra += `\nMy starting lineup value goes from ${Math.round(L.before.total)} to ${Math.round(L.after.total)} (${ch(L)}).`;
+      if (L.theirs) extra += ` ${L.partner}'s goes from ${Math.round(L.theirs.before.total)} to ${Math.round(L.theirs.after.total)} (${ch(L.theirs)}).`;
+    }
+  }
+  if (ctx){
+    extra += `\n\nMY LEAGUE: ${ctx.L.name || "my league"}, ${ctx.L.size || ctx.L.teams.length} teams, lineup ${ctx.L.slots.join(", ")}.\n${roster("My", ctx.roster)}`;
+    if (ctx.partner) extra += `\n${roster(ctx.partner.name + "'s", ctx.partnerRoster)}`;
+  }
   return `Sport: ${name}. League: ${lg}. The app weighs outlook ${settings.upside}% and track record ${100 - settings.upside}%.
 
 I SEND:
@@ -192,13 +330,13 @@ ${lines(t.send)}
 I RECEIVE:
 ${lines(t.get)}
 
-The app's verdict: ${$("verdict").textContent}. ${$("detail").textContent}
+The app's scale: ${$("verdict").textContent}. ${$("detail").textContent}${extra}
 
 My question: ${q || "Should I make this trade?"}`;
 }
 AI.panel($("aiHost"), {
-  intro: "A second opinion on the trade above, with today's injury news and depth charts checked.",
-  presets: ["Should I make this trade?", "What would make this fair?", "Who wins this long-term?"],
+  intro: "A second opinion on the trade above: a grade, the reasons, a counteroffer, and the risk, with today's injury news and depth charts checked.",
+  presets: ["Should I make this trade?", "What counteroffer makes this a win?", "Who wins rest of season?", "Who wins this long-term?"],
   system: () => AI.system(TS.sportName(state.sport)),
   buildPrompt: tradePrompt
 });
