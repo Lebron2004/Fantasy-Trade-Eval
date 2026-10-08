@@ -470,9 +470,9 @@ li.pick small{display:block;color:var(--muted);font-size:.84rem}
 /* Trade report: grade badge, ruling, value breakdown, lineup changes */
 .report{--panel-c:var(--brand)}
 .rep-head{display:flex;gap:16px;align-items:center}
-.grade{flex:none;width:76px;height:76px;border-radius:20px;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:2.4rem;line-height:1;color:#fff;
+.tgrade{flex:none;width:76px;height:76px;border-radius:20px;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:2.4rem;line-height:1;color:#fff;
   background:var(--brand);box-shadow:inset 0 -4px 0 rgba(0,0,0,.15)}
-.grade.g-good{background:var(--ch-5)} .grade.g-even{background:var(--ch-3);color:#1b1500} .grade.g-bad{background:var(--ch-1)}
+.tgrade.g-good{background:var(--ch-5)} .tgrade.g-even{background:var(--ch-3);color:#1b1500} .tgrade.g-bad{background:var(--ch-1)}
 .rep-kicker{color:var(--muted);font-size:.8rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
 .rep-ruling{font-family:var(--display);font-weight:800;font-size:clamp(1.5rem,3.4vw,2rem);line-height:1.05;margin:2px 0 4px}
 .rep-head .split{margin:0}
@@ -496,7 +496,7 @@ li.pick small{display:block;color:var(--muted);font-size:.84rem}
 .lu-chg h3 .up{color:var(--ch-5)} .lu-chg h3 .down{color:var(--ch-1)}
 .lu-chg ul{margin:0;padding:0;list-style:none;font-size:.9rem;display:grid;gap:3px}
 .lu-chg .in::before{content:"\25B2  ";color:var(--ch-5);font-size:.7rem} .lu-chg .out::before{content:"\25BC  ";color:var(--ch-1);font-size:.7rem}
-@media (max-width:520px){.grade{width:60px;height:60px;font-size:1.9rem;border-radius:16px}.vb-row{grid-template-columns:4.5rem 1fr 2.6rem}}
+@media (max-width:520px){.tgrade{width:60px;height:60px;font-size:1.9rem;border-radius:16px}.vb-row{grid-template-columns:4.5rem 1fr 2.6rem}}
 .grade-chip{display:inline-flex;align-items:center;gap:8px;margin-top:10px;padding:4px 12px 4px 4px;border-radius:999px;background:var(--brand-soft);color:var(--ink);text-decoration:none;font-size:.9rem;font-weight:600}
 .grade-chip b{display:grid;place-items:center;min-width:2.1em;height:2.1em;padding:0 4px;border-radius:999px;background:var(--brand);color:#fff;font-family:var(--display);font-size:1.05rem}
 .grade-chip.g-good b{background:var(--ch-5)} .grade-chip.g-even b{background:var(--ch-3);color:#1b1500} .grade-chip.g-bad b{background:var(--ch-1)}
