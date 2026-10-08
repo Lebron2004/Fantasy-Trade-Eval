@@ -197,7 +197,7 @@ function renderReport(){
   const vrow = (lbl, list, tot, cls) => el("div", {class:"vb-row " + cls}, el("span", {class:"vb-l", text:lbl}),
     el("div", {class:"vb-track"}, el("div", {style:`width:${tot / max * 100}%`}, breakdown(list, sport, tot))), el("b", {text: Math.round(tot)}));
   const head = el("div", {class:"rep-head"},
-    el("div", {class:"grade g-" + r.tone, "aria-label":`Grade ${r.grade}`, text:r.grade}),
+    el("div", {class:"tgrade g-" + r.tone, "aria-label":`Grade ${r.grade}`, text:r.grade}),
     el("div", {}, el("div", {class:"rep-kicker", text:"Trade grade for your side"}), el("div", {class:"rep-ruling", text:r.ruling}),
       el("p", {class:"split", text: r.lineup ? `Graded on value, what it does to your starting lineup in ${r.lineup.partner ? "your league" : "your synced team"}, the trained model, and health.` :
         "Graded on value, the trained model, and health. Sync your league on My league to grade it against your actual lineup too."})));
