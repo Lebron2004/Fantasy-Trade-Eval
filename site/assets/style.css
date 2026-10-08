@@ -500,3 +500,41 @@ li.pick small{display:block;color:var(--muted);font-size:.84rem}
 .grade-chip{display:inline-flex;align-items:center;gap:8px;margin-top:10px;padding:4px 12px 4px 4px;border-radius:999px;background:var(--brand-soft);color:var(--ink);text-decoration:none;font-size:.9rem;font-weight:600}
 .grade-chip b{display:grid;place-items:center;min-width:2.1em;height:2.1em;padding:0 4px;border-radius:999px;background:var(--brand);color:#fff;font-family:var(--display);font-size:1.05rem}
 .grade-chip.g-good b{background:var(--ch-5)} .grade-chip.g-even b{background:var(--ch-3);color:#1b1500} .grade-chip.g-bad b{background:var(--ch-1)}
+
+/* My league co-manager: section tabs, stat tiles, the weekly game plan, buy/sell cards, position fixes */
+.tabs{display:flex;gap:4px;margin-top:22px;padding:4px;background:var(--surface);border-radius:999px;box-shadow:var(--shadow);overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tabs button{flex:none;border:0;background:none;padding:8px 14px;border-radius:999px;font-family:var(--display);font-weight:700;font-size:1.08rem;color:var(--muted);cursor:pointer;white-space:nowrap}
+.tabs button[aria-selected="true"]{background:var(--brand);color:var(--on-brand)}
+.tabs button:hover:not([aria-selected="true"]){color:var(--ink)}
+.tabbody>.panel:first-child{margin-top:14px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:6px}
+.tile{background:var(--paper);border-radius:14px;padding:12px 14px;border-left:5px solid var(--line);min-width:0}
+.tile .lbl{display:block;color:var(--muted);font-size:.78rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+.tile b{display:block;font-family:var(--display);font-weight:800;font-size:2rem;line-height:1.05}
+.tile small{display:block;color:var(--muted);font-size:.84rem}
+.tile.good{border-left-color:var(--ch-5)} .tile.good b{color:var(--ch-5)}
+.tile.mid{border-left-color:var(--ch-3)}
+.tile.bad{border-left-color:var(--ch-1)} .tile.bad b{color:var(--ch-1)}
+.plan{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.plan li{display:grid;grid-template-columns:6.2rem minmax(0,1fr) auto;gap:12px;align-items:center;border:1px solid var(--line);border-left:5px solid var(--line);border-radius:12px;padding:10px 12px}
+.plan li.act{border-left-color:var(--brand)} .plan li.warn{border-left-color:var(--ch-3)} .plan li.ok{border-left-color:var(--ch-5)}
+.plan .tag{font-family:var(--display);font-weight:700;font-size:1rem;color:var(--brand)}
+.plan .txt{font-size:.95rem;min-width:0}
+.plan .txt small{display:block;color:var(--muted);font-size:.84rem;margin-top:3px}
+.btn.small{padding:5px 12px;font-size:.85rem}
+.lu .ss{display:flex;align-items:center;gap:8px}
+.lu.learn .slot{color:var(--brand)}
+.bs-card{border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-top:10px;display:grid;gap:8px}
+.bs-head{display:grid;grid-template-columns:3.4rem minmax(0,1fr);gap:10px;align-items:center}
+.bs-head .slot{font-family:var(--display);font-weight:700;text-align:center;border-radius:8px;padding:2px 0}
+.bs-head small{color:var(--muted);font-weight:400}
+.bs-card .why{margin:0;color:var(--muted);font-size:.93rem}
+.bs-card .idea{border-style:dashed}
+.pos-card{border:1px solid var(--line);border-radius:14px;padding:4px 14px 12px;margin-top:10px}
+.pos-card .grp{margin:8px 0 4px}
+.pos-card .why{margin:0 0 6px;color:var(--muted);font-size:.92rem}
+.fixes{margin:0;padding-left:18px;display:grid;gap:4px;font-size:.94rem}
+input.num{width:5.5rem;border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:10px;padding:6px 8px;font-size:.95rem}
+input.num.rec{width:3.4rem;padding:3px 6px;margin:0 2px}
+@media (max-width:560px){.plan li{grid-template-columns:1fr auto}.plan .tag{grid-column:1 / -1}.tile b{font-size:1.6rem}}

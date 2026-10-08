@@ -17,13 +17,17 @@ From then on it runs by itself every day at 11:00 UTC. To change the time, edit 
 
 **Trade calculator** (`index.html`): put players on each side and the scale tips toward the side getting more value. Below it, a **trade report** grades the deal for your side from A+ to F with a plain ruling ("Clear win for you", "Slight overpay"), a bar showing how much of each package's value every player carries, and the factors behind the grade: value, the trained model's lean, injuries, age in dynasty, and roster spots. If the players you send are on your team in **My league**, it also grades what the deal does to your starting lineup (which counts for more than raw value, since bench depth rarely scores), shows who moves in and out of your lineup and your partner's, and warns when the deal hurts your partner enough that they're likely to say no.
 
-**My league** (`league.html`): sync a Sleeper league (football or basketball) with just your username, or build any league by hand (ESPN, Yahoo, baseball, hockey). It shows:
+**My league** (`league.html`): sync a Sleeper league (football or basketball) with just your username, or build any league by hand (ESPN, Yahoo, baseball, hockey). It's split into tabs:
 
-- **Your best lineup**, filled automatically from your roster using your league's actual lineup slots, flex spots included.
-- **Where you stand** at each position, graded against the league average (or against an average team your league's size, if you haven't entered every roster), with your rank at each spot.
-- **Trade ideas**: deals within about 15% of even value that improve your starting lineup without gutting your partner's, with the reason each one works for both sides. One click opens any idea in the calculator.
-- **Waiver pickups**: available players who'd start for you right away, plus the best depth at your weakest spots.
-- **Power rankings**: every team's lineup strength, biggest strength, and biggest need. Click a team to compare side by side.
+- **Co-manager**: your record, playoff odds, and this week's win chance at a glance, then a ranked game plan for the week: lineup changes, injured starters, the closest start/sit call, the best pickup, the best fair trade (with how it moves your playoff odds), a player to buy, one to sell, and your weakest position. It also shows how its projection model has retuned itself.
+- **Start / sit**: projected fantasy points for every player this week, adjusted for how the opposing defense treats his position (with its rank), byes, and injury designations, plus the close calls and how often the bench player would outscore the starter.
+- **Buy** and **Sell**: players whose outlook beats their trade value (the trained model likes them, they're heating up, they've been unlucky against their projection, their schedule gets easier) and the reverse on your roster, each with a fair offer built from real rosters.
+- **Positions**: each position graded against the league, weakest first, with the best fix: a pickup, a trade, or a buy-low target.
+- **Fair offers**: deals within about 15% of even value that improve your lineup without gutting your partner's, with how likely they are to accept and how each one moves your playoff odds.
+- **Playoffs**: odds for every team from 4,000 simulated seasons of the remaining schedule, your remaining opponents with win chances, and what winning or losing this week does to your odds. Sleeper leagues pull standings and the schedule automatically; for other leagues you type in records and your playoff settings.
+- **Team & waivers**: your best lineup, where you stand at each position, team news, waiver pickups, power rankings, and the defense-vs-position table.
+
+The football projections learn as the season goes: each week the page saves its projection for every player, grades itself against what they actually scored (from `data/nfl-results.json`, written every morning), and retunes how much it trusts Sleeper's projection, season average, recent form, the trained prop model, and the matchup. It checks the tuned weights on the latest week it didn't train on and shows the result, so you can see whether it's actually getting better. What it learns stays in your browser.
 
 **Props** (`props.html`): pick a sport (football, basketball, hockey, baseball, college football, college basketball, UFC, soccer, or T20 cricket), any player or fighter, and a prop, then set the line. Props include yards, receptions, and TDs (NFL and college football); points, rebounds, assists, threes, and combos (NBA and men's college basketball); shots, points, goals, hits, blocks, and goalie saves (NHL); hits, total bases, home runs, RBIs, and pitcher strikeouts and outs (MLB); and fight props for UFC: to win, wins by KO/TKO, submission or decision, goes the distance, total rounds, significant strikes, takedowns, and knockdowns; shots, shots on target, anytime goalscorer, assists, fouls, cards, and keeper saves for soccer (Premier League, La Liga, Serie A, Bundesliga, Ligue 1, MLS, and the Champions League); and runs, fours, sixes, boundaries, wickets, and runs conceded for T20 cricket (IPL, Big Bash, PSL, CPL, SA20, Major League Cricket, ILT20, and men's T20 internationals between the twelve full-member nations). You get:
 
@@ -54,7 +58,7 @@ Every morning, after the prop model trains, two more steps run:
 - **Buy low, sell high** (`scripts/trade_signals.py`): the trained model's next-game Over chances are turned into one fantasy projection per player (PPR for football; points, rebounds, assists, steals, blocks and turnovers for basketball; goals, assists, shots and blocks for hockey; bases, runs, RBIs, walks and steals for baseball hitters, outs and strikeouts for pitchers). Each player is ranked at his position by that projection and by trade value. When the model ranks him well above his trade value he's a **buy**; well below, a **sell**. Players ruled out, doubtful, or on IR get no signal, since the model doesn't know about injuries. Written to `data/signals.json`.
 - **Player news** (`scripts/update_news.py`): injury designation changes since yesterday (ruled out, placed on IR, back off the report), team changes, and ESPN's latest injury notes and headlines for every sport, matched to players. Kept for 10 days in `data/news.json`.
 
-On **My league** this adds a **News for your team** panel that says what to do about each item (bench him and who moves into your lineup, move him to IR, game-time call), a **Buy low, sell high** panel with one-click trades, and model chips on every player. Trade ideas are ranked partly by the model's lean, and each idea says when you're buying low or selling high. The **trade calculator** shows the model's view under each player, his latest news, whether the model leans toward your side of the deal, and a news feed for the sport. The AI GM gets all of it too.
+On **My league** this adds a **News for your team** panel that says what to do about each item (bench him and who moves into your lineup, move him to IR, game-time call), **Buy** and **Sell** tabs with fair offers, and model chips on every player. Trade ideas are ranked partly by the model's lean, and each idea says when you're buying low or selling high. The **trade calculator** shows the model's view under each player, his latest news, whether the model leans toward your side of the deal, and a news feed for the sport. The AI GM gets all of it too.
 
 ## How player values work
 
@@ -167,7 +171,8 @@ site/assets/slip.js            bet slip reader (players, markets, lines, odds)
 site/assets/style.css          shared styles
 site/assets/core.js            shared data loading, valuation, search
 site/assets/trade.js           trade calculator logic
-site/assets/league.js          league sync, lineups, needs, trade ideas, pickups, matchups
+site/assets/league.js          league sync, tabs, lineups, needs, trade ideas, pickups, matchups
+site/assets/comanager.js       weekly projections that retune themselves, playoff simulation, buy/sell reads
 site/assets/ai.js              AI GM panel (Claude + web search)
 scripts/sync_leagues.py        ESPN and Yahoo league sync (runs in the daily job)
 scripts/yahoo_auth.py          one-time Yahoo login helper (run on your computer)
