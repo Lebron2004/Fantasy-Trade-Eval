@@ -15,7 +15,7 @@ From then on it runs by itself every day at 11:00 UTC. To change the time, edit 
 
 ## Two pages
 
-**Trade calculator** (`index.html`): put players on each side and the scale tips toward the side getting more value.
+**Trade calculator** (`index.html`): put players on each side and the scale tips toward the side getting more value. Below it, a **trade report** grades the deal for your side from A+ to F with a plain ruling ("Clear win for you", "Slight overpay"), a bar showing how much of each package's value every player carries, and the factors behind the grade: value, the trained model's lean, injuries, age in dynasty, and roster spots. If the players you send are on your team in **My league**, it also grades what the deal does to your starting lineup (which counts for more than raw value, since bench depth rarely scores), shows who moves in and out of your lineup and your partner's, and warns when the deal hurts your partner enough that they're likely to say no.
 
 **My league** (`league.html`): sync a Sleeper league (football or basketball) with just your username, or build any league by hand (ESPN, Yahoo, baseball, hockey). It shows:
 
@@ -104,7 +104,7 @@ Heads up: synced rosters and team names are published with your site (the secret
 
 ## AI GM
 
-Both pages have an **Ask the AI GM** panel. It sends everything the page knows (your lineup, bench, values, matchups, position grades, other teams' needs, the model's trade ideas, and pickups) to Claude, which searches the web for the latest injury news and depth charts before answering.
+Both pages have an **Ask the AI GM** panel. It sends everything the page knows (your lineup, bench, values, matchups, position grades, other teams' needs, the model's trade ideas, and pickups) to Claude, which searches the web for the latest injury news and depth charts before answering. On the trade calculator it also gets the trade report, both teams' starting lineups and benches when your league is synced, and each player's rank at his position. Claude thinks the deal through before answering (adaptive thinking) and replies in a set shape: a **Ruling** with a letter grade, **Why** (the reasons, naming players), a **Counter** that would make the deal a win, and the **Risk**. Claude Opus 5.5 is the default; Sonnet 5.5 is faster at about half the cost, and Haiku 5.5 is the cheapest.
 
 It uses your own Anthropic API key: create one at https://console.anthropic.com, add a few dollars of credit, and paste it into the panel. Most questions cost a few cents. The key is saved only in your browser and sent only to Anthropic; don't save it on a shared computer. If your Anthropic organization hasn't enabled web search, the AI still answers but without today's news (an admin can turn it on in the Console).
 

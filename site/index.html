@@ -7,7 +7,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚖️</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
@@ -56,6 +56,7 @@
       </svg>
       <div class="verdict" id="verdict">Build a trade</div>
       <p class="detail" id="detail">Add at least one player to each side.</p>
+      <a class="grade-chip" id="gradeChip" href="#report" hidden></a>
       <div class="actions">
         <button class="btn primary" id="saveBtn">Save trade</button>
         <button class="btn" id="swapBtn">Flip sides</button>
@@ -71,6 +72,8 @@
       <div class="total"><span>Package value</span><b id="tot-get">0</b></div>
     </section>
   </main>
+
+  <section class="panel report" id="report" aria-live="polite" hidden></section>
 
   <section class="panel">
     <h2>Ask the AI GM</h2>

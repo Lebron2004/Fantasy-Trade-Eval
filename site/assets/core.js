@@ -199,6 +199,7 @@ const TS = (() => {
     const x = p.x || {};
     const parts = [`${p.name} (${p.pos}, ${p.team || "FA"}${ageOf(p.born) != null ? ", age " + ageOf(p.born) : ""})`,
       `value ${Math.round(adjusted(p, sport))}`];
+    const rk = posRank(p, sport); if (rk) parts.push(`ranked ${rk} by value`);
     if (p.prod != null) parts.push(`track record ${p.prod}`);
     if (p.outlook != null) parts.push(`outlook ${p.outlook}`);
     if (p.inj) parts.push(`injury: ${p.inj}`);
@@ -236,6 +237,63 @@ const TS = (() => {
     let t; range.oninput = () => { clearTimeout(t); t = setTimeout(() => setSetting("upside", Number(range.value)), 120); };
     container.append(el("span", {class:"upside"}, el("span", {class:"lbl", text:"Value by"}),
       el("small", {text:"Track record"}), range, el("small", {text:"Outlook"})));
+  }
+
+  /* ---------- Lineup rules per sport (shared by the league page and the trade report) ---------- */
+  const DEFAULT_SLOTS = {
+    nfl: "QB, RB, RB, WR, WR, TE, FLEX",
+    nba: "PG, SG, G, SF, PF, F, C, UTIL, UTIL, UTIL",
+    mlb: "C, 1B, 2B, 3B, SS, OF, OF, OF, UTIL, SP, SP, SP, SP, SP, RP, RP",
+    nhl: "C, C, LW, LW, RW, RW, D, D, D, D, G, G"
+  };
+  const GROUPS = {nfl:["QB","RB","WR","TE","K","DEF"], nba:["PG","SG","SF","PF","C"],
+                  mlb:["C","1B","2B","3B","SS","OF","SP","RP"], nhl:["C","LW","RW","D","G"]};
+  // Flex slots: which positions can fill them. "*" = anyone, "H" = any hitter, "S" = any skater.
+  const FLEX = {
+    nfl: {FLEX:["RB","WR","TE"], SUPER_FLEX:["QB","RB","WR","TE"], REC_FLEX:["WR","TE"], WRRB_FLEX:["WR","RB"]},
+    nba: {G:["PG","SG","G"], F:["SF","PF","F"], UTIL:"*", "SG/SF":["SG","SF"], "G/F":["PG","SG","SF","PF","G","F"],
+          "PF/C":["PF","C"], "F/C":["SF","PF","C","F"]},
+    mlb: {UTIL:"H", DH:"H", P:["SP","RP","P"], OF:["OF","LF","CF","RF"], CI:["1B","3B"], MI:["2B","SS"], IF:["1B","2B","3B","SS"]},
+    nhl: {UTIL:"S", F:["C","LW","RW"], W:["LW","RW"]}
+  };
+  const SKIP_SLOTS = new Set(["BN","IR","TAXI","DL","LB","DB","IDP_FLEX","DE","DT","CB","S","ILB","OLB"]);
+  function accepts(sport, slot, p){
+    const f = FLEX[sport][slot];
+    if (f === "*") return true;
+    if (f === "H") return p.elig.some(e => !["SP","RP","P"].includes(e));
+    if (f === "S") return !p.elig.includes("G");
+    if (f) return p.elig.some(e => f.includes(e));
+    return p.elig.includes(slot);
+  }
+  const slotWidth = (sport, slot) => { const f = FLEX[sport][slot]; return typeof f === "string" ? 99 : f ? f.length : 1; };
+  const parseSlots = txt => txt.toUpperCase().split(/[\s,]+/).map(s => s.trim()).filter(s => s && !SKIP_SLOTS.has(s));
+  // Fill a lineup's slots from a roster, narrowest slots first so flex spots take what's left.
+  function bestLineup(sport, slots, players, val){
+    const order = slots.map((s, i) => ({s, i, w: slotWidth(sport, s)})).sort((a, b) => a.w - b.w || a.i - b.i);
+    const sorted = [...players].sort((a, b) => val(b) - val(a)), used = new Set(), starters = new Array(slots.length).fill(null);
+    for (const o of order){
+      const p = sorted.find(q => !used.has(q.id) && accepts(sport, o.s, q));
+      if (p){ used.add(p.id); starters[o.i] = p; }
+    }
+    let total = 0; starters.forEach(p => { if (p) total += val(p); });
+    return {starters, bench: sorted.filter(p => !used.has(p.id)), total};
+  }
+  const LINEUP = {DEFAULT_SLOTS, GROUPS, FLEX, SKIP_SLOTS, accepts, slotWidth, parseSlots, bestLineup};
+
+  // Where a player ranks at his position by value right now, e.g. "WR14" (recomputed when settings change).
+  const rankCache = new Map();
+  onSettings(() => rankCache.clear());
+  function posRank(p, sport){
+    const pool = pools[sport]; if (!pool || p.custom || !p.pos) return "";
+    const pos = p.pos.split("/")[0];
+    let ranks = rankCache.get(sport + ":" + pos);
+    if (!ranks){
+      ranks = new Map();
+      pool.filter(q => q.pos.split("/")[0] === pos).sort((a, b) => adjusted(b, sport) - adjusted(a, sport)).forEach((q, i) => ranks.set(q.id, i + 1));
+      rankCache.set(sport + ":" + pos, ranks);
+    }
+    const r = ranks.get(String(p.id));
+    return r ? pos + r : "";
   }
 
   /* ---------- Player search (accessible combobox) ---------- */
@@ -310,5 +368,5 @@ const TS = (() => {
   return {SPORTS, sportName, store, settings, setSetting, onSettings, getJSON, norm, pools, loadSport,
           ageOf, adjusted, packageScore, el, injTag, metaText, splitText, toItem, settingsBar, makeSearch, ago,
           matchupWord, matchupTag, insightText, aiLine, chanceTier, chanceClass,
-          signalOf, signalText, signalTag, newsFor, allNews, newsLine, newsWhen, HURT};
+          signalOf, signalText, signalTag, newsFor, allNews, newsLine, newsWhen, HURT, LINEUP, posRank};
 })();
