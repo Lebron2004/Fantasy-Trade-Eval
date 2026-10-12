@@ -68,17 +68,20 @@ const LIVE = (() => {
     return {state: ty.state || "pre", completed: !!ty.completed, detail: ty.shortDetail || ty.detail || "",
             period: st.period || 0, clock: typeof st.clock === "number" ? st.clock : null};
   }
-  // team: our code, or for team bets {abbr, nick} (ESPN's code plus the nickname, which survives code changes)
+  // team: our code, or for team bets {abbr, nick} (ESPN's code plus the nickname, which survives code changes);
+  // college mascots repeat (dozens of Tigers), so there the school has to match too
   async function findGame(sport, team){
     const sb = await scoreboard(sport), code = typeof team === "string" ? team : team.abbr, nick = typeof team === "string" ? "" : norm(team.nick);
+    const school = typeof team !== "string" && (sport === "cfb" || sport === "cbb") ? norm(team.city) : "";
     const want = espnTeam(sport, code);
     // soccer and cricket teams go by name ("Arsenal", "Mumbai Indians"); a name ESPN shares across leagues carries its code: "Name (ABC)"
     const named = (sport === "soc" || sport === "cri") && code ? norm(code.replace(/\s*\(([^)]*)\)$/, "")) : "";
     const codeIn = (/\(([^)]*)\)$/.exec(code || "") || [])[1];
+    const byName = t => nick && norm(t.name || t.shortDisplayName) === nick && (!school || norm(t.location) === school || norm(t.shortDisplayName) === school);
     for (const ev of sb.events || []){
       const comp = (ev.competitions || [])[0] || {};
       const cs = comp.competitors || [];
-      const me = cs.find(c => c.team && (c.team.abbreviation === want || c.team.abbreviation === code || (nick && norm(c.team.name || c.team.shortDisplayName) === nick)
+      const me = cs.find(c => c.team && (c.team.abbreviation === want || c.team.abbreviation === code || byName(c.team)
         || (named && [c.team.shortDisplayName, c.team.displayName, c.team.name].some(n => norm(n) === named) && (!codeIn || c.team.abbreviation === codeIn))));
       if (!me) continue;
       const them = cs.find(c => c !== me) || {};

@@ -33,8 +33,6 @@ MARKETS = {
     "nba": {"pts": 9.5, "reb": 3.5, "ast": 2.5, "pts+reb+ast": 14.5, "pts+reb": 12.5, "pts+ast": 11.5, "fg3": 1.5},
     "nhl": {"sog": 1.5, "pts": 0.5, "hit": 1.5},
     "mlb": {"h": 0.5, "tb": 1.5, "h+r+rbi": 1.5, "k": 3.5, "outs": 14.5, "ha": 3.5},
-    "cfb": {"pyd": 149.5, "ptd": 1.5, "cmp": 12.5, "ruyd": 29.5, "reyd": 29.5, "rec": 2.5, "ruyd+reyd": 39.5},
-    "cbb": {"pts": 9.5, "reb": 3.5, "ast": 2.5, "pts+reb+ast": 14.5, "pts+reb": 12.5, "pts+ast": 11.5, "fg3": 1.5},
     # fights: yes/no props have no role minimum; strikes and takedowns need a fighter who actually throws or wrestles
     "ufc": {"win": 0, "dist": 0, "rnd": 0.5, "sig": 19.5, "tdl": 0.5},
     # soccer: shot, foul and save counts; goals, assists and cards price so far under that they'd crowd out everything else
@@ -43,10 +41,9 @@ MARKETS = {
 }
 # props about the whole fight, not one fighter: both fighters' pages carry the same bet, so keep one per bout
 FIGHT_LEVEL = {"dist", "rnd"}
-COLLEGE = {"cfb", "cbb"}
 SKIP_GROUPS = {"nhl": {"G"}, "mlb": {"RP"}}   # no starting-goalie data; relievers' roles change night to night
 # a player whose last game is older than this (vs the latest game in the data) is probably hurt or out of the lineup
-STALE_DAYS = {"nfl": 16, "nba": 10, "nhl": 10, "mlb": 10, "cfb": 16, "cbb": 10, "ufc": 100000,
+STALE_DAYS = {"nfl": 16, "nba": 10, "nhl": 10, "mlb": 10, "ufc": 100000,
               "soc": 21, "cri": 400}   # cricketers go months between series and leagues   # fighters go months between fights
 # no injury or lineup data: a player who sat out this many of his team's latest matches is probably hurt or dropped
 MISSED = {"soc": 2, "cri": 1}
@@ -133,9 +130,6 @@ def build_sport(sport):
         if doc.get("ml") and doc.get("team") in teams and log:
             docs.append((doc, log))
     season_on = latest and (TODAY - date.fromisoformat(latest)).days <= 30
-    team_last = {}
-    for doc, log in docs:
-        team_last[doc["team"]] = max(team_last.get(doc["team"], ""), log[-1]["d"])
     # each team's latest match dates, from its players' logs (a cricketer's log mixes his franchise and his country)
     team_dates = {}
     for doc, log in docs:
@@ -153,8 +147,6 @@ def build_sport(sport):
             continue
         if cutoff and log[-1]["d"] < cutoff:
             continue
-        if sport in COLLEGE and season_on and log[-1]["d"] < team_last.get(doc["team"], ""):
-            continue      # sat out his team's latest game: likely hurt, and college teams post no injury tags here
         if sport in MISSED and season_on:
             recent = sorted(team_dates.get(doc["team"], ()))[-MISSED[sport]:]
             mine_d = {g["d"] for g in log if g.get("tm") == doc["team"]}
@@ -170,9 +162,7 @@ def build_sport(sport):
             vals = [stat_of(g, key) for g in log]
             if len(vals) < 5:
                 continue
-            # college roles change a lot between seasons, so once he has a few games this year a book sets lines off those
-            now = [stat_of(g, key) for g in log if g.get("s") == log[-1].get("s")] if sport in COLLEGE else []
-            line, p_over = book_line(entry, now if len(now) >= 3 else vals)
+            line, p_over = book_line(entry, vals)
             # a book posts this prop only for a player whose current role reaches it (not a backup QB's completions)
             if line < markets[key] or sum(vals[-5:]) / len(vals[-5:]) < markets[key]:
                 continue
@@ -239,7 +229,7 @@ def build_sport(sport):
 
 def main():
     result = {"updated": datetime.now(timezone.utc).isoformat(timespec="minutes"), "date": TODAY.isoformat(), "sports": {}}
-    for sport in ("nfl", "nba", "nhl", "mlb", "cfb", "cbb", "ufc", "soc", "cri"):
+    for sport in ("nfl", "nba", "nhl", "mlb", "ufc", "soc", "cri"):
         try:
             s = build_sport(sport)
         except Exception as e:

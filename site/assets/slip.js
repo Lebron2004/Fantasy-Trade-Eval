@@ -49,8 +49,6 @@ const SLIP = (() => {
       ["wickets taken","wk"],["bowler wickets","wk"],["player wickets","wk"],["wickets","wk"],["wicket","wk"],["boundaries","f4+s6"],
       ["total fours","f4"],["fours","f4"],["4s","f4"],["total sixes","s6"],["sixes","s6"],["6s","s6"],["balls faced","bf"],["balls bowled","bb"],["runs","r"]]
   };
-  MARKETS.cfb = MARKETS.nfl.filter(([, k]) => k !== "tgt" && k !== "ppr");   // no targets or fantasy points in college data
-  MARKETS.cbb = MARKETS.nba;
   // teams per sport: ESPN code | nickname(s) | city(s) | other codes books use
   const TEAMS = {
     nhl: `ANA|Ducks|Anaheim|ANH
@@ -178,6 +176,181 @@ TEX|Rangers|Texas|
 TOR|Blue Jays/Jays|Toronto|
 WSH|Nationals/Nats|Washington|WSN/WAS`
   };
+  // college teams (football's FBS; basketball adds the rest of Division I from the daily data): ESPN code | mascot(s) | school name(s) | other codes
+  const COLLEGE = `BC|Eagles|Boston College|
+CAL|Golden Bears|California/Cal|
+CLEM|Tigers|Clemson|
+DUKE|Blue Devils|Duke|
+FSU|Seminoles/Noles|Florida State/Florida St|
+GT|Yellow Jackets|Georgia Tech|
+LOU|Cardinals|Louisville|
+MIA|Hurricanes/Canes|Miami/Miami (FL)/Miami FL/Miami Florida|
+UNC|Tar Heels|North Carolina/UNC|
+NCST|Wolfpack|NC State/North Carolina State/N.C. State|
+PITT|Panthers|Pittsburgh/Pitt|
+SMU|Mustangs|SMU/Southern Methodist|
+STAN|Cardinal|Stanford|
+SYR|Orange|Syracuse|
+UVA|Cavaliers|Virginia|
+VT|Hokies|Virginia Tech|
+WAKE|Demon Deacons|Wake Forest|
+ILL|Fighting Illini/Illini|Illinois|
+IU|Hoosiers|Indiana|IND
+IOWA|Hawkeyes|Iowa|
+MD|Terrapins/Terps|Maryland|
+MICH|Wolverines|Michigan|
+MSU|Spartans|Michigan State/Michigan St|
+MINN|Golden Gophers/Gophers|Minnesota|
+NEB|Cornhuskers/Huskers|Nebraska|
+NU|Wildcats|Northwestern|NW
+OSU|Buckeyes|Ohio State/Ohio St|
+ORE|Ducks|Oregon|
+PSU|Nittany Lions|Penn State/Penn St|
+PUR|Boilermakers|Purdue|
+RUTG|Scarlet Knights|Rutgers|
+UCLA|Bruins|UCLA|
+USC|Trojans|USC/Southern California|
+WASH|Huskies|Washington|
+WIS|Badgers|Wisconsin|
+ARIZ|Wildcats|Arizona|
+ASU|Sun Devils|Arizona State/Arizona St|
+BAY|Bears|Baylor|
+BYU|Cougars|BYU/Brigham Young|
+CIN|Bearcats|Cincinnati|
+COLO|Buffaloes/Buffs|Colorado|
+HOU|Cougars|Houston|
+ISU|Cyclones|Iowa State/Iowa St|
+KU|Jayhawks|Kansas|
+KSU|Wildcats|Kansas State/Kansas St/K-State|
+OKST|Cowboys|Oklahoma State/Oklahoma St|
+TCU|Horned Frogs|TCU/Texas Christian|
+TTU|Red Raiders|Texas Tech|
+UCF|Knights|UCF/Central Florida|
+UTAH|Utes|Utah|
+WVU|Mountaineers|West Virginia|
+ALA|Crimson Tide|Alabama|
+ARK|Razorbacks/Hogs|Arkansas|
+AUB|Tigers|Auburn|
+FLA|Gators|Florida|
+UGA|Bulldogs|Georgia|
+UK|Wildcats|Kentucky|
+LSU|Tigers|LSU/Louisiana State|
+MSST|Bulldogs|Mississippi State/Mississippi St|
+MIZ|Tigers|Missouri/Mizzou|
+OU|Sooners|Oklahoma|
+MISS|Rebels|Ole Miss/Mississippi|
+SC|Gamecocks|South Carolina|
+TENN|Volunteers/Vols|Tennessee|
+TEX|Longhorns|Texas|
+TA&M|Aggies|Texas A&M/Texas AM|TAMU
+VAN|Commodores|Vanderbilt/Vandy|
+ORST|Beavers|Oregon State/Oregon St|
+WSU|Cougars|Washington State/Washington St|
+ND|Fighting Irish|Notre Dame|
+CONN|Huskies|UConn/Connecticut|
+ARMY|Black Knights|Army|
+CLT|49ers|Charlotte|
+ECU|Pirates|East Carolina|
+FAU|Owls|FAU/Florida Atlantic|
+MEM|Tigers|Memphis|
+NAVY|Midshipmen|Navy|
+UNT|Mean Green|North Texas|
+RICE|Owls|Rice|
+USF|Bulls|South Florida/USF|
+TEM|Owls|Temple|
+TULN|Green Wave|Tulane|
+TLSA|Golden Hurricane|Tulsa|
+UAB|Blazers|UAB|
+UTSA|Roadrunners|UTSA|
+AF|Falcons|Air Force|
+BSU|Broncos|Boise State/Boise St|
+CSU|Rams|Colorado State/Colorado St|
+FRES|Bulldogs|Fresno State/Fresno St|
+HAW|Rainbow Warriors|Hawai'i/Hawaii|
+NEV|Wolf Pack|Nevada|
+UNM|Lobos|New Mexico|
+SDSU|Aztecs|San Diego State/San Diego St|
+SJSU|Spartans|San Jose State/San José State/San Jose St|
+UNLV|Rebels|UNLV|
+USU|Aggies|Utah State/Utah St|
+WYO|Cowboys|Wyoming|
+APP|Mountaineers|App State/Appalachian State|
+ARST|Red Wolves|Arkansas State/Arkansas St|
+CCU|Chanticleers|Coastal Carolina|
+GASO|Eagles|Georgia Southern|
+GAST|Panthers|Georgia State/Georgia St|
+JMU|Dukes|James Madison/JMU|
+UL|Ragin' Cajuns/Cajuns|Louisiana/Louisiana-Lafayette/UL Lafayette|
+ULM|Warhawks|UL Monroe/Louisiana-Monroe/Louisiana Monroe|
+MRSH|Thundering Herd|Marshall|
+ODU|Monarchs|Old Dominion|
+USA|Jaguars|South Alabama|
+USM|Golden Eagles|Southern Miss/Southern Mississippi|
+TXST|Bobcats|Texas State/Texas St|
+TROY|Trojans|Troy|
+AKR|Zips|Akron|
+BALL|Cardinals|Ball State/Ball St|
+BGSU|Falcons|Bowling Green|
+BUFF|Bulls|Buffalo|
+CMU|Chippewas|Central Michigan|
+EMU|Eagles|Eastern Michigan|
+KENT|Golden Flashes|Kent State/Kent St|
+M-OH|RedHawks/Red Hawks|Miami (OH)/Miami OH/Miami Ohio/Miami (Ohio)|
+NIU|Huskies|Northern Illinois|
+OHIO|Bobcats|Ohio|
+TOL|Rockets|Toledo|
+WMU|Broncos|Western Michigan|
+MASS|Minutemen|UMass/Massachusetts|
+DEL|Blue Hens|Delaware|
+FIU|Panthers|FIU/Florida International|
+JVST|Gamecocks|Jacksonville State/Jacksonville St|JSU
+KENN|Owls|Kennesaw State/Kennesaw St|
+LIB|Flames|Liberty|
+LT|Bulldogs|Louisiana Tech|
+MTSU|Blue Raiders|Middle Tennessee/Middle Tennessee State|
+MOST|Bears|Missouri State/Missouri St|
+NMSU|Aggies|New Mexico State/New Mexico St|
+SHSU|Bearkats|Sam Houston/Sam Houston State|
+UTEP|Miners|UTEP|
+WKU|Hilltoppers|Western Kentucky|`;
+  const HOOPS_ONLY = `GONZ|Bulldogs/Zags|Gonzaga|
+VILL|Wildcats|Villanova/Nova|
+CREI|Bluejays|Creighton|
+MARQ|Golden Eagles|Marquette|
+XAV|Musketeers|Xavier|
+BUT|Bulldogs|Butler|
+SJU|Red Storm|St. John's/Saint John's/St Johns|
+HALL|Pirates|Seton Hall|
+PROV|Friars|Providence|
+GTWN|Hoyas|Georgetown|
+DEP|Blue Demons|DePaul|
+DAY|Flyers|Dayton|
+SMC|Gaels|Saint Mary's/St. Mary's|
+VCU|Rams|VCU|
+SLU|Billikens|Saint Louis/St. Louis U|
+DRKE|Bulldogs|Drake|
+GCU|Lopes/Antelopes|Grand Canyon|
+WICH|Shockers|Wichita State/Wichita St|
+LUC|Ramblers|Loyola Chicago/Loyola-Chicago|
+SBU|Bonnies|St. Bonaventure/Saint Bonaventure|
+RICH|Spiders|Richmond|
+DAV|Wildcats|Davidson|
+GMU|Patriots|George Mason|
+UCSD|Tritons|UC San Diego|
+UCI|Anteaters|UC Irvine|
+BEL|Bruins|Belmont|
+MCN|Cowboys|McNeese/McNeese State|
+HP|Panthers|High Point|
+FUR|Paladins|Furman|
+UVM|Catamounts|Vermont|
+YALE|Bulldogs|Yale|
+PRIN|Tigers|Princeton|
+BRAD|Braves|Bradley|
+JOES|Hawks|Saint Joseph's/St. Joseph's|
+UNCW|Seahawks|UNC Wilmington/UNCW|
+SCU|Broncos|Santa Clara|
+SF|Dons|San Francisco|`;
+
   // markets that are "yes/no" by nature: a hit means at least one
   const YES = /\b(anytime|to score|goalscorer|goal scorer|scorer|to hit a home run|to record)\b/;
   const ODDS = /(?:^|[\s(])([+\-]\d{3,5})(?=$|[\s)])/;
@@ -251,31 +424,60 @@ WSH|Nationals/Nats|Washington|WSN/WAS`
   /* ---------- teams ---------- */
   const tkey = s => " " + norm(s).replace(/[.']/g, " ").replace(/\s+/g, " ").trim() + " ";
   const TEAM_LIST = [];
-  Object.entries(TEAMS).forEach(([sport, rows]) => rows.split("\n").forEach(row => {
-    const [abbr, nicks, cities, alts] = row.split("|");
-    const nk = nicks.split("/"), cs = cities.split("/");
-    TEAM_LIST.push({sport, abbr, nick: nk[0], city: cs[0], nicks: nk.map(tkey), cities: cs.map(tkey),
-      codes: [abbr, ...(alts ? alts.split("/") : [])].map(c => new RegExp(`(^|[^A-Za-z])${c}(?=$|[^A-Za-z'])`))});
-  }));
+  // short college codes ("SC", "UK") and ones that read as words on a slip are matched by name only
+  const CODE_STOP = new Set(["OVER","UNDER","TOTAL","PICK","LIVE","ODDS","BET","WIN","ALT","SGP","USA"]);
+  const codeRe = c => new RegExp(`(^|[^A-Za-z])${c.replace(/[.*+?^${}()|[\]\\&-]/g, "\\$&")}(?=$|[^A-Za-z'])`);
+  function mkTeam(sport, abbr, nicks, cities, alts, college){
+    // an apostrophe can be read as a gap or dropped ("Hawai'i", "Hawaii")
+    const keys = names => [...new Set(names.filter(Boolean).flatMap(n => [tkey(n), tkey(n.replace(/'/g, ""))]))].filter(k => k.trim());
+    const codes = [abbr, ...alts].filter(c => c && (!college || (c.length >= 3 && !CODE_STOP.has(c))));
+    return {sport, abbr, nick: nicks[0] || "", city: cities[0], college, nicks: keys(nicks), cities: keys(cities), codes: [...new Set(codes)].map(codeRe)};
+  }
+  const rowsOf = text => text.split("\n").map(row => { const [abbr, nicks, cities, alts] = row.split("|"); return [abbr, nicks.split("/"), cities.split("/"), alts ? alts.split("/") : []]; });
+  Object.entries(TEAMS).forEach(([sport, rows]) => rowsOf(rows).forEach(([abbr, nk, cs, alts]) => TEAM_LIST.push(mkTeam(sport, abbr, nk, cs, alts, false))));
+  const COLLEGE_ROWS = {cfb: rowsOf(COLLEGE), cbb: [...rowsOf(COLLEGE), ...rowsOf(HOOPS_ONLY)]};
+  Object.entries(COLLEGE_ROWS).forEach(([sport, rows]) => rows.forEach(([abbr, nk, cs, alts]) => TEAM_LIST.push(mkTeam(sport, abbr, nk, cs, alts, true))));
+  // the daily data's team list (ESPN's codes, schools and mascots) replaces the built-in one for a college sport,
+  // keeping the built-in nicknames and short names ("Ole Miss", "Zags") for the schools it matches
+  function setTeams(sport, rows){
+    if (!rows || !rows.length) return;
+    const mine = COLLEGE_ROWS[sport] || [];
+    const sameSchool = (a, b) => a.some(x => b.includes(x));
+    const schoolKeys = names => names.filter(Boolean).map(n => tkey(n.replace(/'/g, "")));
+    const fresh = rows.map(([abbr, location, mascot, short]) => {
+      const ks = schoolKeys([location, short]);
+      const known = mine.find(([, , cs]) => sameSchool(schoolKeys(cs), ks));
+      const nicks = [mascot, ...(known ? known[1] : [])], cities = [location, short, ...(known ? known[2] : [])];
+      return mkTeam(sport, abbr, [...new Set(nicks.filter(Boolean))], [...new Set(cities.filter(Boolean))], known ? [known[0], ...known[3]] : [], true);
+    });
+    for (let i = TEAM_LIST.length - 1; i >= 0; i--) if (TEAM_LIST[i].sport === sport) TEAM_LIST.splice(i, 1);
+    TEAM_LIST.push(...fresh);
+  }
   // every team named in a line, grouped by where the name sits (one spot can be several teams: "Kings", "Jets")
   function findTeams(line){
     const t = tkey(line), groups = [];
     for (const tm of TEAM_LIST){
-      let at = -1, len = 0, score = 0;
+      let at = -1, len = 0, score = 0, named = 0;
       for (const n of tm.nicks){ const i = t.indexOf(n); if (i >= 0 && n.length > len){ at = i; len = n.length; score = 2; } }
-      const city = tm.cities.find(c => t.includes(c)), code = tm.codes.map(re => re.exec(line)).find(Boolean);
+      const city = tm.cities.filter(c => t.includes(c)).sort((a, b) => b.length - a.length)[0], code = tm.codes.map(re => re.exec(line)).find(Boolean);
       if (at < 0){
         if (city){ at = t.indexOf(city); len = city.length; score = 1; }
         else if (code){ at = code.index; len = code[0].length + 1; score = 1; }
         else continue;
       } else if (city || code) score = 3;
+      named = len + (score === 3 && city ? city.length : 0);
       // spans share their edge spaces, so neighbours ("Knicks @ Heat") only touch
       const g = groups.find(g => g.at < at + len - 1 && at < g.at + g.len - 1);
-      const m = {tm, score};
+      const m = {tm, score, named};
       if (!g) groups.push({at, len, cands: [m]});
       else { g.cands.push(m); if (len > g.len){ g.at = at; g.len = len; } }
     }
-    groups.forEach(g => { const top = Math.max(...g.cands.map(c => c.score)); g.score = top; g.cands = g.cands.filter(c => c.score === top).map(c => c.tm); });
+    // the best evidence wins, then the longest name: "Texas A&M" over "Texas", "Golden Knights" over "Knights"
+    groups.forEach(g => {
+      const top = Math.max(...g.cands.map(c => c.score)); g.score = top;
+      const best = g.cands.filter(c => c.score === top), most = Math.max(...best.map(c => c.named));
+      g.cands = best.filter(c => c.named === most).map(c => c.tm);
+    });
     // a longer name wins over a shorter one inside it ("Golden Knights" over a lone "Golden State" city match, etc.)
     return groups.filter(g => g.score >= 2 || !groups.some(h => h !== g && h.score >= 2)).sort((a, b) => a.at - b.at);
   }
@@ -287,7 +489,8 @@ WSH|Nationals/Nats|Washington|WSN/WAS`
   }
   const teamOut = tm => ({abbr: tm.abbr, nick: tm.nick, city: tm.city, name: tm.city.includes(tm.nick) ? tm.city : `${tm.city} ${tm.nick}`});
   // lines a league could actually post, so "Jets -3.5" is football and "Kings over 220.5" is basketball
-  const PLAUSIBLE = {nhl: {spread: 3, total: [3, 10]}, mlb: {spread: 3, total: [4, 16]}, nba: {spread: 30, total: [150, 280]}, nfl: {spread: 30, total: [25, 75]}};
+  const PLAUSIBLE = {nhl: {spread: 3, total: [3, 10]}, mlb: {spread: 3, total: [4, 16]}, nba: {spread: 30, total: [150, 280]}, nfl: {spread: 30, total: [25, 75]},
+                     cfb: {spread: 60, total: [30, 100]}, cbb: {spread: 45, total: [100, 200]}};
   function plausible(sport, market, ln){
     const P = PLAUSIBLE[sport]; if (ln == null || !P) return true;
     if (market === "spread") return Math.abs(ln) <= P.spread;
@@ -303,7 +506,7 @@ WSH|Nationals/Nats|Washington|WSN/WAS`
   // a game line on a team: odds, a spread, a total, or the word moneyline
   const teamSignal = line => ODDS.test(line) || SPREAD.test(line) || ML_WORD.test(line) || TOTAL.test(line);
 
-  function buildTeamLeg(lines, rows, i, stop){
+  function buildTeamLeg(lines, rows, i, stop, active){
     const ctx = lines.slice(i, stop).join(" ");
     // the pick's own text: its line, plus the next one when the market sits under the team name
     const line = !teamSignal(lines[i]) && lines[i + 1] && i + 1 < stop ? lines[i] + " " + lines[i + 1] : lines[i];
@@ -330,6 +533,9 @@ WSH|Nationals/Nats|Washington|WSN/WAS`
     if (!cands.length) cands = pickG.cands;
     const ok = cands.filter(c => plausible(c.sport, market, ln));
     if (ok.length) cands = ok;
+    // a college name is both a football and a basketball team: keep the one that's playing soon
+    const on = active ? cands.filter(c => active(c) !== false) : cands;
+    if (on.length) cands = on;
     return {kind: "team", cands, rest, market, line: ln, side, odds: om ? american(om[1]) : null,
             text: line.slice(0, 120), ctx: ctx.slice(0, 160), sure: pickG.score >= 2 && cands.length === 1 && (market !== "ml" || !!om || ML_WORD.test(ctx))};
   }
@@ -374,12 +580,19 @@ WSH|Nationals/Nats|Washington|WSN/WAS`
     return {stake: w, bonus, odds: dec && dec > 1.01 ? fromDec(dec) : null};
   }
 
-  function parse(text, idx){
+  // opts.active(team): false when the data says that team has no game soon (used to tell college football from basketball)
+  function parse(text, idx, opts = {}){
     const raw = String(text || "").replace(/\r/g, "").replace(/[−–]/g, "-").replace(/½/g, ".5");
     const lines = raw.split(/\n|(?<=[a-z0-9)])\s*[|•·]\s*/i).map(s => s.trim()).filter(Boolean);
     const rows = lines.map(line => {
-      const teams = PAYLINE.test(line) ? [] : findTeams(line);
-      const pl = findPlayers(teams.length ? maskTeams(line, teams) : line, idx);
+      let teams = PAYLINE.test(line) ? [] : findTeams(line);
+      // a full player name wins over a school or city inside it ("Troy Franklin" isn't Troy)
+      const whole = findPlayers(line, idx);
+      if (whole && whole.exact && teams.length){
+        const nm = tkey(whole.cands[0].name);
+        teams = teams.filter(g => !g.cands.some(tm => [...tm.nicks, ...tm.cities].some(n => nm.includes(n))));
+      }
+      const pl = whole && whole.exact ? whole : findPlayers(teams.length ? maskTeams(line, teams) : line, idx);
       let kind = null;
       if (pl && pl.exact) kind = "player";
       else if (teams.length && !PAYLINE.test(line) && teamSignal(line) && (teams.some(g => g.score >= 2) || ML_WORD.test(line) || SPREAD.test(line) || TOTAL.test(line))) kind = "team";
@@ -421,7 +634,7 @@ WSH|Nationals/Nats|Washington|WSN/WAS`
                    sure: h.exact && h.cands.length === 1 && !!key && !!ln});
         return;
       }
-      const t = buildTeamLeg(lines, rows, i, stop);
+      const t = buildTeamLeg(lines, rows, i, stop, opts.active);
       if (!t) return;
       for (let j = i; j < stop; j++) used.add(j);
       pending.push(legs.length); legs.push(t);
@@ -449,6 +662,6 @@ WSH|Nationals/Nats|Washington|WSN/WAS`
     return {legs, odds, stake, bonus, oddsFrom};
   }
 
-  return {parse, buildIndex, findLine, findMarket, findTeams, norm, MARKETS, TEAMS};
+  return {parse, buildIndex, findLine, findMarket, findTeams, setTeams, norm, MARKETS, TEAMS};
 })();
 if (typeof module !== "undefined") module.exports = SLIP;

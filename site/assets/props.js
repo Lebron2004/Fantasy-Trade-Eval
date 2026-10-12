@@ -4,7 +4,10 @@
 const {el, norm, getJSON, store, chanceClass} = TS;
 const $ = id => document.getElementById(id);
 const SPORTS = [["nfl","Football"],["nba","Basketball"],["nhl","Hockey"],["mlb","Baseball"],["cfb","College FB"],["cbb","College BB"],["ufc","UFC"],["soc","Soccer"],["cri","Cricket"]];
-const FOOTBALL = ["nfl","cfb"];
+const FOOTBALL = ["nfl"];
+// college tabs price games (spread, moneyline, total), not players: many states allow only game bets on college sports
+const GAME_SPORTS = ["cfb","cbb"];
+const isGameSport = sp => GAME_SPORTS.includes(sp);
 const CFG = {
   nfl: {
     props: {
@@ -47,26 +50,6 @@ const CFG = {
     disp: {tb:1.9, "h+r+rbi":1.5, rbi:1.4, r:1.2, er:1.4, ha:1.2, k:1.15},
     groups: {H:"hitters", SP:"starting pitchers", RP:"relievers"}, defKeys: {H:["h","tb","hr","rbi"], SP:["k","outs","er","ha"], RP:["k","outs","ha"]},
     search: "Search any MLB player or team", rest: null},
-  cfb: {
-    props: {
-      QB: [["pyd","Passing yards"],["ptd","Passing TDs"],["cmp","Completions"],["att","Pass attempts"],["int","Interceptions"],
-           ["ruyd","Rushing yards"],["pyd+ruyd","Pass + rush yards"],["td","Anytime TD"]],
-      RB: [["ruyd","Rushing yards"],["car","Carries"],["ruyd+reyd","Rush + rec yards"],["rec","Receptions"],["reyd","Receiving yards"],["td","Anytime TD"]],
-      WR: [["reyd","Receiving yards"],["rec","Receptions"],["ruyd+reyd","Rush + rec yards"],["td","Anytime TD"]],
-      TE: [["reyd","Receiving yards"],["rec","Receptions"],["td","Anytime TD"]]},
-    label: {pyd:"pass yds", ptd:"pass TDs", cmp:"completions", att:"attempts", int:"INTs", car:"carries", ruyd:"rush yds", rutd:"rush TDs",
-            rec:"receptions", reyd:"rec yds", retd:"rec TDs", td:"TDs"},
-    count: ["ptd","int","td","rutd","retd","rec"],
-    cv: {pyd:.35, att:.22, cmp:.26, ruyd:.55, reyd:.65, rec:.45, car:.32},
-    groups: {QB:"QBs", RB:"RBs", WR:"WRs", TE:"TEs"}, defKeys: {QB:["pyd","ptd","int","ruyd"], RB:["ruyd","rutd","rec","reyd"], WR:["rec","reyd","retd"], TE:["rec","reyd","retd"]},
-    search: "Search any college football player or team", rest: null},
-  cbb: {
-    props: null,
-    label: {pts:"pts", reb:"reb", ast:"ast", fg3:"threes", stl:"steals", blk:"blocks", tov:"turnovers", min:"minutes"},
-    count: ["fg3","stl","blk","tov"],
-    cv: {pts:.36, reb:.42, ast:.5, min:.2, "pts+reb+ast":.3, "pts+reb":.32, "pts+ast":.33, "reb+ast":.38},
-    groups: {G:"guards", F:"forwards", C:"centers"}, defKeys: {G:["pts","ast","fg3","reb"], F:["pts","reb","ast","fg3"], C:["pts","reb","blk","ast"]},
-    search: "Search any college basketball player or team", rest: null},
   // a fighter is his own "team"; his opponent is the matchup, and "defense" is what an opponent gives up per fight
   ufc: {
     props: null,
@@ -109,7 +92,6 @@ const CFG = {
     search: "Search any T20 cricketer or team", rest: null}
 };
 CFG.nba.props = {G: CFG.nba.all, F: CFG.nba.all, C: CFG.nba.all};
-CFG.cbb.props = CFG.nba.props;
 CFG.ufc.props = Object.fromEntries(Object.keys(CFG.ufc.groups).map(g => [g, CFG.ufc.all]));
 CFG.ufc.defKeys = Object.fromEntries(Object.keys(CFG.ufc.groups).map(g => [g, ["sig","tdl","kd","win"]]));
 let sport = "nfl";
@@ -159,7 +141,7 @@ function probOver(mu, sd, line, count, disp = 1, binary = false){
 /* ---------- Trained model ---------- */
 // scripts/train_props_model.py writes, into each player's file, the trained model's chance of the Over for his next
 // game at a grid of half-point lines ("ml"). It's used wherever the line falls inside that grid; otherwise the formula.
-const FLOAT_STATS = {nfl:["ppr"], nba:["min"], nhl:["toi"], mlb:[], cfb:[], cbb:["min"], ufc:["rnd"], soc:[], cri:[]};
+const FLOAT_STATS = {nfl:["ppr"], nba:["min"], nhl:["toi"], mlb:[], ufc:["rnd"], soc:[], cri:[]};
 function mlChance(doc, key, line, sp = sport){
   const m = doc && doc.ml && doc.ml[key]; if (!m || !m.l || !m.l.length) return null;
   const L = m.l, P = m.p;
@@ -227,7 +209,7 @@ function project(key){
     let fOpp = 1;
     if (opp && opp.pos[pos] && lg.pos[pos] && lg.pos[pos][c]){
       const raw = (opp.pos[pos].allow[c] ?? lg.pos[pos][c]) / lg.pos[pos][c];
-      const [damp, cap] = {nfl:[0.6, 0.3], nba:[0.4, 0.15], nhl:[0.5, 0.2], mlb:[0.5, 0.2], cfb:[0.6, 0.3], cbb:[0.4, 0.15], ufc:[0.5, 0.25], soc:[0.4, 0.2], cri:[0.4, 0.2]}[sport];   // trust in position-level defense data
+      const [damp, cap] = {nfl:[0.6, 0.3], nba:[0.4, 0.15], nhl:[0.5, 0.2], mlb:[0.5, 0.2], ufc:[0.5, 0.25], soc:[0.4, 0.2], cri:[0.4, 0.2]}[sport];   // trust in position-level defense data
       fOpp = Math.min(1 + cap, Math.max(1 - cap, 1 + (raw - 1) * damp));
     }
     // scheme: his splits weighted by how often this defense does each thing
@@ -337,10 +319,9 @@ function bestPanel(b, sp){
   box.append(el("h2", {text:`Best bets for ${slateName(b)}`}));
   if (!b.picks.length){ box.append(el("p", {class:"empty", style:"margin:0", text: b.note || "No picks for this slate yet."})); return box; }
   const unit = sp === "ufc" ? "fight" : "game";
-  const basis = sp === "ufc" ? "his last 10 fights" : sp === "cfb" || sp === "cbb" ? "this season's games (his last 10 until he has 3)" : "his last 10 games";
+  const basis = sp === "ufc" ? "his last 10 fights" : "his last 10 games";
   const fresh = sp === "ufc" ? "Rebuilt every morning with the latest results and the next card."
     : sp === "soc" || sp === "cri" ? "Rebuilt every morning with the latest results; players left out of their team's recent matches are skipped, since injury news and lineups aren't in the free data."
-    : sp === "cfb" || sp === "cbb" ? "Rebuilt every morning with the latest results; players who sat out their team's last game are left out, since college injury reports aren't in the free data."
     : "Rebuilt every morning with the latest results and injury tags; injured players are left out.";
   box.append(el("p", {class:"sub", text:`The trained model's most likely props across ${b.games} ${unit}${b.games === 1 ? "" : "s"}, each at the line nearest his average over ${basis}, since real sportsbook lines aren't in the free data. Your book's line may differ, so tap a pick to check it at that line. ${fresh}`}));
   const byId = new Map([...b.picks, ...(b.extra || [])].map(c => [c.pid + ":" + c.key, c]));
@@ -407,6 +388,221 @@ function cardOrder(){
   if (!on.length) return null;
   const when = p => index.next[p[2]].date + (index.next[p[2]].time || ""), bout = p => [p[2], index.next[p[2]].opp].sort().join("|");
   return on.sort((a, b) => when(a).localeCompare(when(b)) || bout(a).localeCompare(bout(b))).slice(0, 40);
+}
+
+/* ---------- College game lines: spread, moneyline and total picks from team ratings ---------- */
+// scripts/update_college_games.py writes data/props/<cfb|cbb>/games.json every morning: a rating for every team, the model's
+// margin and total for each game in the next few days, and the book's line from ESPN when it has one
+const gameData = {};
+const loadGames = sp => gameData[sp] || (gameData[sp] = getJSON(`data/props/${sp}/games.json`).then(d => {
+  d.byAbbr = new Map(d.teams.map(r => [r[0], r]));
+  d.games = d.games.filter(g => g.m != null && (!g.start || new Date(g.start) > Date.now()));   // not started yet
+  return d;
+}).catch(e => { delete gameData[sp]; throw e; }));
+const schoolKey = s => norm(s || "").replace(/[^a-z0-9]/g, "");
+function teamInfo(d, abbr){
+  const r = d.byAbbr.get(abbr) || [abbr, abbr, "", abbr];
+  const city = r[1] || abbr, nick = r[2] || "";
+  return {abbr, city, nick, name: nick ? `${city} ${nick}` : city, short: r[3] || city, rating: r[4], rank: r[5]};
+}
+const legTeam = t => ({abbr: t.abbr, nick: t.nick, city: t.city, name: t.name});
+// the game a slip's team plays next: ESPN's code first, else the school's name
+function collegeGame(d, team){
+  const want = schoolKey(team.city);
+  const row = d.byAbbr.get(team.abbr) || d.teams.find(r => schoolKey(r[1]) === want || schoolKey(r[3]) === want);
+  if (!row) return null;
+  const g = d.games.find(x => x.home === row[0] || x.away === row[0]);
+  return g ? {g, home: g.home === row[0], abbr: row[0]} : null;
+}
+// the expected home margin and total: the book's line moved part of the way toward the model, by as much as
+// trusting the model that far paid off on last season's games (all the way to the model when there's no line)
+function expectGame(d, g){
+  const M = d.model, L = g.line || {};
+  let m = g.m, t = g.t;
+  if (L.spread != null) m = -L.spread + M.k * (g.m - -L.spread);
+  if (L.total != null && t != null) t = L.total + M.k_total * (t - L.total);
+  return {m, t, sd: M.sd || 15, sdT: M.sd_total || 15};
+}
+// bet: {market: ml|spread|total|teamtotal, home (the side, for team bets), line, side (over|under)}
+function gameChance(d, g, bet){
+  const e = expectGame(d, g), over = (mu, line, sd) => Phi((mu - line) / sd);
+  if (bet.market === "total"){
+    if (bet.line == null || e.t == null) return null;
+    const p = over(e.t, bet.line, e.sdT); return bet.side === "under" ? 1 - p : p;
+  }
+  const my = bet.home ? e.m : -e.m;
+  if (bet.market === "teamtotal"){
+    if (bet.line == null || e.t == null) return null;
+    const p = over((e.t + my) / 2, bet.line, e.sdT * 0.7); return bet.side === "under" ? 1 - p : p;
+  }
+  return Phi((my + (bet.market === "spread" ? bet.line || 0 : 0)) / e.sd);
+}
+const half = v => Math.round(v * 2) / 2;
+function modelLineText(d, g){
+  const m = half(g.m);
+  if (!m) return "Pick'em";
+  const fav = teamInfo(d, m > 0 ? g.home : g.away);
+  return `${fav.short} -${Math.abs(m)}`;
+}
+function bookLineText(d, g){
+  const s = g.line && g.line.spread;
+  if (s == null) return "–";
+  if (!s) return "Pick'em";
+  return s < 0 ? `${teamInfo(d, g.home).short} ${s}` : `${teamInfo(d, g.away).short} -${s}`;
+}
+const kickoff = iso => iso ? new Date(iso).toLocaleString(undefined, {weekday:"short", month:"short", day:"numeric", hour:"numeric", minute:"2-digit"}) : "";
+const matchup = (d, g) => `${teamInfo(d, g.away).short} ${g.neutral ? "vs" : "at"} ${teamInfo(d, g.home).short}`;
+// every bet the model can price on one game, each with its chance
+function gameBets(d, g){
+  const L = g.line || {}, out = [];
+  const pH = gameChance(d, g, {market:"ml", home:true});
+  out.push({g, market:"ml", home:true, p:pH, odds:L.mlH}, {g, market:"ml", home:false, p:1 - pH, odds:L.mlA});
+  const s = L.spread != null ? L.spread : -half(g.m);   // no book line yet: the model's own
+  const cH = gameChance(d, g, {market:"spread", home:true, line:s});
+  out.push({g, market:"spread", home:true, line:s, p:cH, book: L.spread != null}, {g, market:"spread", home:false, line:-s, p:1 - cH, book: L.spread != null});
+  const t = L.total != null ? L.total : g.t != null ? half(g.t) : null;
+  if (t != null){
+    const o = gameChance(d, g, {market:"total", line:t, side:"over"});
+    out.push({g, market:"total", side:"over", line:t, p:o, book: L.total != null}, {g, market:"total", side:"under", line:t, p:1 - o, book: L.total != null});
+  }
+  return out;
+}
+function betText(d, b){
+  const me = teamInfo(d, b.home ? b.g.home : b.g.away);
+  if (b.market === "ml") return `${me.short} to win`;
+  if (b.market === "spread") return `${me.short} ${b.line ? signed(b.line) : "pick'em"}`;
+  return `${b.side === "over" ? "Over" : "Under"} ${b.line}`;
+}
+function betLeg(d, sp, b){
+  const home = b.market === "total" ? true : b.home;
+  return {kind:"team", sport:sp, market:b.market, team:legTeam(teamInfo(d, home ? b.g.home : b.g.away)), opp:legTeam(teamInfo(d, home ? b.g.away : b.g.home)),
+          line: b.market === "ml" ? null : b.line, side: b.market === "total" ? b.side : null, odds: b.odds != null ? b.odds : null, sure:true, alts:[], text:""};
+}
+async function addBets(d, sp, bets, fresh){
+  if (fresh) slip = {open:true, legs:[], odds:null, stake:null, bonus:false, busy:"", idx: slip.idx};
+  slip.open = true;
+  const legs = bets.map(b => betLeg(d, sp, b));
+  slip.legs.push(...legs);
+  renderSlip(); $("slip").scrollIntoView({behavior:"smooth", block:"start"});
+  await Promise.all(legs.map(modelLeg)); renderSlip();
+}
+
+let gameView = {filter:"", open:null};
+function gameSportName(sp){ return sp === "cfb" ? "college football" : "college basketball"; }
+function renderGamePicker(d, sp){
+  const host = $("picker"); host.innerHTML = "";
+  const input = el("input", {type:"search", placeholder:`Find a ${sp === "cfb" ? "college football" : "college basketball"} team`, "aria-label":"Find a team", value: gameView.filter, autocomplete:"off"});
+  input.oninput = () => { gameView.filter = input.value; renderGames(d, sp); };
+  host.append(el("div", {class:"search", style:"max-width:520px"}, input));
+}
+function renderGames(d, sp){
+  const app = $("app"); app.innerHTML = "";
+  const q = schoolKey(gameView.filter);
+  const has = g => !q || [g.home, g.away].some(a => { const t = teamInfo(d, a); return [t.name, t.short, a].some(x => schoolKey(x).includes(q)); });
+  const list = d.games.filter(has);
+  const bt = d.backtest || {}, M = d.model || {};
+  const intro = el("section", {class:"panel best"},
+    el("h2", {text:`${sp === "cfb" ? "College football" : "College basketball"} game picks`}),
+    el("p", {class:"sub", text:`Game lines only: spread, moneyline and total, since many states (yours included) don't allow player props on college games. `
+      + `The model rates every team from this season's scores, with last season's games carrying the early weeks, and adds a home-field edge of ${fmt1(M.hfa || 0)} points. `
+      + `Where the book has posted a line, the chances start from that line and move ${Math.round((M.k || 0) * 100)}% of the way toward the model, because that's how much of the gap held up on last season's games.`
+      + (bt.games ? ` Tested week by week on ${bt.season} (${bt.games.toLocaleString()} games), it picked the winner ${pct(bt.winner)} of the time${bt.ats ? ` and went ${pct(bt.ats.pct)} against the spread` : ""}${bt.ou ? ` and ${pct(bt.ou.pct)} on totals` : ""}.` : "")
+      + ` Beating -110 takes 52.4%, so treat spread and total picks as leans.`}));
+  app.append(intro);
+  if (!d.games.length){
+    intro.append(el("p", {class:"empty", style:"margin:0", text:`No ${gameSportName(sp)} games in the next few days. Picks show up here once the schedule has games.`}));
+    return;
+  }
+  if (gameView.open){ const g = d.games.find(x => x.id === gameView.open); if (g) app.append(gamePanel(d, sp, g)); }
+  const all = list.flatMap(g => gameBets(d, g));
+  const top = (pred, n) => all.filter(b => b.p > 0.5 && pred(b)).sort((a, b) => b.p - a.p).slice(0, n);   // the side the model favors
+  const spreads = top(b => b.market === "spread" && b.book, 8), totals = top(b => b.market === "total" && b.book, 6);
+  const mls = top(b => b.market === "ml", 8);
+  // a 3-leg parlay, one leg per game: the likeliest spread and total picks against real lines, else moneylines
+  const pool = [...spreads, ...totals].sort((a, b) => b.p - a.p), legs = [], seen = new Set();
+  for (const b of pool.length >= 3 ? pool : mls){ if (!seen.has(b.g.id)){ seen.add(b.g.id); legs.push(b); } if (legs.length === 3) break; }
+  const box = el("section", {class:"panel best"});
+  if (legs.length === 3){
+    const p = legs.reduce((x, b) => x * b.p, 1);
+    box.append(el("h3", {text:"Best 3-leg parlay"}), el("div", {class:"parlays"}, el("div", {class:`parlay ${tier(p, 3)}`},
+      el("div", {class:"parlay-top"}, el("strong", {text:"Best parlay"}), chancePill(p, 3)),
+      el("ul", {}, ...legs.map(b => el("li", {}, el("button", {class:"linkish", text:betText(d, b), onclick: () => openGame(d, sp, b.g)}),
+        el("small", {text:` ${matchup(d, b.g)}, ${pct(b.p)}`})))),
+      el("div", {class:"parlay-foot"}, el("small", {text:`Fair odds ${toAmerican(p)}. One leg per game.`}),
+        el("button", {class:"btn tiny", text:"Check in slip", onclick: () => addBets(d, sp, legs, true)})))));
+  }
+  const pickList = (bs, why) => el("ol", {class:"picks"}, ...bs.map(b => el("li", {class:"pick"}, chancePill(b.p),
+    el("div", {}, el("button", {class:"linkish", text:betText(d, b), onclick: () => openGame(d, sp, b.g)}),
+      el("div", {class:"pick-line", text:matchup(d, b.g)}), el("small", {text:`${kickoff(b.g.start)}. ${why(b)}`})),
+    el("button", {class:"btn tiny", text:"+ Slip", "aria-label":`Add ${betText(d, b)} to the slip`, onclick: () => addBets(d, sp, [b])}))));
+  if (spreads.length) box.append(el("h3", {text:"Best spread picks"}), pickList(spreads, b => `Model line ${modelLineText(d, b.g)}, book ${bookLineText(d, b.g)}.`));
+  if (totals.length) box.append(el("h3", {text:"Best totals"}), pickList(totals, b => `Model total ${fmt1(b.g.t)}, book ${b.line}.`));
+  box.append(el("h3", {text:"Likeliest winners"}),
+    el("p", {class:"sub", text:"Moneyline favorites, safest first. Heavy favorites pay little, so compare the chance with the book's price."}),
+    pickList(mls, b => b.odds != null ? `Book ${signed(b.odds)} (${pct(implied(b.odds))} with the cut).` : `Model line ${modelLineText(d, b.g)}.`));
+  if (!spreads.length && !totals.length) box.append(el("p", {class:"sub", text:"No book lines posted for these games yet, so only winners are shown. Open a game to price any spread or total."}));
+  app.append(box);
+  // every game, with the model's number next to the book's
+  const tb = el("table", {}, el("thead", {}, el("tr", {}, ...["Game","When","Model line","Book line","Model total","Book total","Win chance"].map(h => el("th", {text:h})))));
+  const body = el("tbody");
+  list.forEach(g => {
+    const pH = gameChance(d, g, {market:"ml", home:true}), fav = teamInfo(d, pH >= 0.5 ? g.home : g.away);
+    body.append(el("tr", {}, el("td", {}, el("button", {class:"linkish", text:matchup(d, g), onclick: () => openGame(d, sp, g)})),
+      el("td", {text:kickoff(g.start)}), el("td", {text:modelLineText(d, g)}), el("td", {text:bookLineText(d, g)}),
+      el("td", {text: g.t != null ? fmt1(g.t) : "–"}), el("td", {text: g.line && g.line.total != null ? String(g.line.total) : "–"}),
+      el("td", {class:"ch", text:`${fav.short} ${pct(Math.max(pH, 1 - pH))}`})));
+  });
+  tb.append(body);
+  app.append(el("section", {class:"panel"}, el("h2", {text:`All games (${list.length})`}),
+    el("p", {class:"sub", text:"Tap a game to price any spread or total and add it to your slip."}), el("div", {class:"tablewrap"}, tb)));
+}
+function openGame(d, sp, g){
+  gameView.open = g.id; renderGames(d, sp);
+  const p = $("game-panel"); if (p) p.scrollIntoView({behavior:"smooth", block:"start"});
+}
+// one game: every bet with its chance, lines you can change to match your book
+function gamePanel(d, sp, g){
+  const H = teamInfo(d, g.home), A = teamInfo(d, g.away), L = g.line || {};
+  const box = el("section", {class:"panel", id:"game-panel"});
+  const rk = t => t.rank ? `#${t.rank} in the ratings` : "unrated";
+  box.append(el("div", {class:"bar-row", style:"justify-content:space-between"},
+      el("h2", {text:`${A.name} ${g.neutral ? "vs" : "at"} ${H.name}`}),
+      el("button", {class:"btn tiny", text:"Close", onclick: () => { gameView.open = null; renderGames(d, sp); }})),
+    el("p", {class:"sub", text:`${kickoff(g.start)}${g.neutral ? ", neutral site" : ""}. ${A.short} ${rk(A)}, ${H.short} ${rk(H)}. Model: ${modelLineText(d, g)}, total ${g.t != null ? fmt1(g.t) : "–"}. Book: ${bookLineText(d, g)}${L.total != null ? `, total ${L.total}` : ""}.`}));
+  const ul = el("ul", {class:"why-list"});
+  let spread = L.spread != null ? L.spread : -half(g.m), total = L.total != null ? L.total : g.t != null ? half(g.t) : null;
+  const draw = () => {
+    ul.innerHTML = "";
+    const row = (label, input, b) => {
+      const p = gameChance(d, g, b);
+      ul.append(el("li", {}, el("div", {}, el("strong", {text:label}), input || null),
+        el("span", {class:`chance ${p == null ? "lo" : tier(p)}`, text: p == null ? "–" : pct(p)}),
+        el("button", {class:"btn tiny", text:"+ Slip", "aria-label":`Add ${label} to the slip`, onclick: () => addBets(d, sp, [{g, ...b, odds: b.market === "ml" ? (b.home ? L.mlH : L.mlA) : null}])})));
+    };
+    const lineIn = (v, set) => { const i = el("input", {type:"number", step:"0.5", value: v ?? "", class:"line-in sm", "aria-label":"Line"}); i.onchange = () => { set(i.value === "" ? null : Number(i.value)); draw(); }; return i; };
+    row(`${H.short} spread`, lineIn(spread, v => { spread = v || 0; }), {market:"spread", home:true, line:spread});
+    row(`${A.short} spread`, el("small", {text:` ${spread ? signed(-spread) : "pick'em"}`}), {market:"spread", home:false, line:-spread});
+    row(`${H.short} to win`, L.mlH != null ? el("small", {text:` book ${signed(L.mlH)}`}) : null, {market:"ml", home:true});
+    row(`${A.short} to win`, L.mlA != null ? el("small", {text:` book ${signed(L.mlA)}`}) : null, {market:"ml", home:false});
+    if (total != null || g.t != null){
+      row("Over", lineIn(total, v => { total = v; }), {market:"total", side:"over", line:total});
+      row("Under", el("small", {text:` ${total ?? ""}`}), {market:"total", side:"under", line:total});
+    }
+  };
+  draw();
+  box.append(ul, el("p", {class:"why", text:`Chances use a spread of about ${fmt1(d.model.sd)} points around the expected margin and ${fmt1(d.model.sd_total)} around the total, which is how far games landed from the model's number last season.`}));
+  return box;
+}
+async function showGames(id){
+  const status = $("status");
+  let d;
+  try { d = await loadGames(id); }
+  catch(e){ status.classList.add("warn"); status.textContent = "College game data isn't built yet. It appears after the next daily update (or run the workflow on GitHub)."; return; }
+  if (id !== sport) return;
+  const lined = d.games.filter(g => g.line && g.line.spread != null).length;
+  status.textContent = `${d.games.length} game${d.games.length === 1 ? "" : "s"} in the next few days${d.games.length ? `, ${lined} with a book line` : ""}. ${d.games_this_season ? `Ratings from the ${d.season} season (${d.games_this_season} games played)` : `The ${d.season} season hasn't started, so ratings come from last season`}, updated ${TS.ago(d.updated)}.`;
+  renderGamePicker(d, id);
+  renderGames(d, id);
 }
 
 async function openPlayer(id, fromHash){
@@ -577,7 +773,7 @@ function chartPanel(all, key, line, side){
     rect.setAttribute("rx", 5); rect.setAttribute("class", "b-" + r); rect.setAttribute("tabindex", "0");
     const when = g.w ? `${seasonName(g.s)} week ${g.w}` : `${shortDate(g.d)}, ${String(g.d).slice(0, 4)}`;
     const result = g.ts != null ? `, ${g.ts > g.os ? "won" : g.ts < g.os ? "lost" : "tied"} ${g.ts}–${g.os}` : g.wn != null ? (g.wn ? ", won" : ", lost") : "";
-    const info = `${when}${g.post ? (sport === "cfb" ? " (bowl or playoff)" : " (playoffs)") : ""}: ${vsAt(g.h)} ${g.o}${result}${g.sr === 5 ? ", 5 rounds" : ""}${g.ttl ? ", title fight" : ""}${g.sp != null ? `, ${g.sp > 0 ? "favored by " + g.sp : g.sp < 0 ? "underdog by " + (-g.sp) : "pick'em"}` : ""}${g.t ? `, total ${g.t}` : ""}${g.rs === 0 ? ", back-to-back" : ""}${g.st === 0 && (sport === "nba" || sport === "cbb") ? ", off the bench" : ""}${g.dr ? `, ${ordinal(g.dr)}-toughest matchup for ${grpName()}` : ""}. ${labelOf(key)}: ${fmt1(v)}. ${Object.entries(g.x).filter(([k]) => k !== "ppr").map(([k, val]) => `${val} ${C().label[k] || k}`).join(", ")}.`;
+    const info = `${when}${g.post ? " (playoffs)" : ""}: ${vsAt(g.h)} ${g.o}${result}${g.sr === 5 ? ", 5 rounds" : ""}${g.ttl ? ", title fight" : ""}${g.sp != null ? `, ${g.sp > 0 ? "favored by " + g.sp : g.sp < 0 ? "underdog by " + (-g.sp) : "pick'em"}` : ""}${g.t ? `, total ${g.t}` : ""}${g.rs === 0 ? ", back-to-back" : ""}${g.st === 0 && sport === "nba" ? ", off the bench" : ""}${g.dr ? `, ${ordinal(g.dr)}-toughest matchup for ${grpName()}` : ""}. ${labelOf(key)}: ${fmt1(v)}. ${Object.entries(g.x).filter(([k]) => k !== "ppr").map(([k, val]) => `${val} ${C().label[k] || k}`).join(", ")}.`;
     const t = document.createElementNS(ns, "title"); t.textContent = info; rect.append(t);
     const pick = () => { detail.textContent = info; svg.querySelectorAll("rect").forEach(r2 => r2.classList.remove("sel")); rect.classList.add("sel"); };
     rect.addEventListener("click", pick); rect.addEventListener("focus", pick);
@@ -661,7 +857,7 @@ function splitsPanel(all, key, line, side, ng, opp){
   const G = grpOf(player), oppRank = ng && opp && opp.pos[G] ? opp.pos[G].rank : null;
   const nTeams = Object.keys(defense.teams).length || 30, bottom = nTeams - 9;
   const won = g => g.ts != null ? g.ts > g.os : g.wn === 1, lost = g => g.ts != null ? g.ts < g.os : g.wn === 0;
-  const [big, hiT, loT] = sport === "cfb" ? [14, 60, 48] : [6, 47, 43];   // college lines and totals run bigger
+  const [big, hiT, loT] = [6, 47, 43];
   const S = [
     ["Home", g => g.h === 1, ng && ng.home === 1], ["Away", g => g.h === 0, ng && ng.home === 0],
     ["Favored", g => g.sp > 0, ng && ng.sp > 0], ["Underdog", g => g.sp < 0, ng && ng.sp < 0],
@@ -674,7 +870,7 @@ function splitsPanel(all, key, line, side, ng, opp){
     ["Division games", g => g.dv === 1, ng && ng.div === 1],
     ...(C().rest ? [["Back-to-back (no rest)", g => g.rs === 0, ng && ng.rest === 0], ["1 day of rest", g => g.rs === 1, ng && ng.rest === 1],
       ["2+ days of rest", g => g.rs >= 2 && g.rs <= 6, ng && ng.rest >= 2 && ng.rest <= 6]] : []),
-    ...(sport === "nba" || sport === "cbb" ? [["Starting", g => g.st === 1, false], ["Off the bench", g => g.st === 0, false], ["Played 32+ minutes", g => (g.x.min || 0) >= 32, false]] : []),
+    ...(sport === "nba" ? [["Starting", g => g.st === 1, false], ["Off the bench", g => g.st === 0, false], ["Played 32+ minutes", g => (g.x.min || 0) >= 32, false]] : []),
     [`vs the 10 toughest matchups for ${grpName()}`, g => g.dr && g.dr <= 10, oppRank && oppRank <= 10],
     [`vs the 10 easiest matchups for ${grpName()}`, g => g.dr && g.dr >= bottom, oppRank && oppRank >= bottom],
     [sport === "ufc" ? "Won the fight" : "Team won", won, false], [sport === "ufc" ? "Lost the fight" : "Team lost", lost, false],
@@ -1073,7 +1269,21 @@ function withPlayer(ctx, fn){
 // a typical two-way market carries about a 4.5% cut; take it out so the chance is the book's honest read
 const fairFromOdds = o => { const p = implied(o); return p == null ? null : Math.min(0.97, p / 1.045); };
 async function modelTeamLeg(leg){
-  leg.p = leg.mine != null ? leg.mine : leg.odds != null ? fairFromOdds(leg.odds) : null;
+  // college: the game model, against this leg's own line
+  let model = null;
+  if (isGameSport(leg.sport)){
+    try {
+      const d = await loadGames(leg.sport), f = collegeGame(d, leg.team);
+      if (f){
+        const g = f.g;
+        leg.team = legTeam(teamInfo(d, f.abbr)); leg.opp = legTeam(teamInfo(d, f.home ? g.away : g.home));
+        leg.start = g.start || null; leg.gameKey = leg.sport + ":" + g.id;
+        model = gameChance(d, g, {market: leg.market, home: f.home, line: leg.line, side: leg.side || "over"});
+      }
+    } catch(e){}
+  }
+  leg.model = model != null;
+  leg.p = leg.mine != null ? leg.mine : model != null ? model : leg.odds != null ? fairFromOdds(leg.odds) : null;
   if (leg.start === undefined){
     leg.start = null;
     try {
@@ -1112,19 +1322,26 @@ let slip = {open: false, legs: [], odds: null, stake: null, busy: "", idx: null}
 async function slipIndex(){
   if (slip.idx) return slip.idx;
   const all = [];
+  const active = {};
   await Promise.all(SPORTS.map(async ([sp]) => {
-    try { const d = await loadSportData(sp); d.index.players.forEach(r => all.push({sport: sp, pid: r[0], name: r[1], team: r[2], grp: sp === "nba" || sp === "cbb" ? null : r[3]})); } catch(e){}
+    if (isGameSport(sp)){
+      // college bets are game lines: teach the reader every school and note who plays soon (football or basketball)
+      try { const d = await loadGames(sp); SLIP.setTeams(sp, d.teams); active[sp] = new Set(d.games.flatMap(g => [g.home, g.away])); } catch(e){}
+      return;
+    }
+    try { const d = await loadSportData(sp); d.index.players.forEach(r => all.push({sport: sp, pid: r[0], name: r[1], team: r[2], grp: sp === "nba" ? null : r[3]})); } catch(e){}
   }));
   // a name in two leagues (a rookie who just left college) reads as the pro league first
   const rank = sp => SPORTS.findIndex(s => s[0] === sp);
   all.sort((a, b) => rank(a.sport) - rank(b.sport));
   slip.idx = SLIP.buildIndex(all);
+  slip.idx.opts = {active: tm => active[tm.sport] ? active[tm.sport].has(tm.abbr) : undefined};
   return slip.idx;
 }
 async function readSlipText(text){
   slip.busy = "Reading the slip..."; renderSlip();
   const idx = await slipIndex();
-  const r = SLIP.parse(text, idx);
+  const r = SLIP.parse(text, idx, idx.opts);
   if (!r.legs.length){ slip.busy = ""; slip.msg = "Couldn't find any legs. Try pasting the text, or add legs below one at a time."; renderSlip(); return; }
   slip.legs.push(...r.legs);
   if (r.odds != null){ slip.odds = r.odds; slip.oddsFrom = r.oddsFrom; }
@@ -1295,7 +1512,7 @@ function teamLegRow(leg, rm){
     ctl.append(sportPick);
   }
   const where = leg.opp ? (leg.market === "total" ? ` ${leg.team.nick} vs ${leg.opp.nick}` : ` vs ${leg.opp.name}`) : "";
-  const from = leg.mine != null ? "your estimate" : leg.odds != null ? `from ${signed(leg.odds)}, minus the book's cut` : "add odds or your %";
+  const from = leg.mine != null ? "your estimate" : leg.model ? "college game model" : leg.odds != null ? `from ${signed(leg.odds)}, minus the book's cut` : "add odds or your %";
   return el("li", {class:"leg"},
     el("div", {}, el("strong", {text: legText(leg)}), el("span", {class:"tag", text:sportLabel(leg.sport)}),
       el("small", {text:`${where.trim()}${!leg.sure ? `${where ? ". " : ""}Check this one, I wasn't sure I read it right` : ""}`})),
@@ -1324,7 +1541,7 @@ function trackSlip(){
 /* ---------- Boot ---------- */
 function readHash(){
   const h = new URLSearchParams(location.hash.slice(1));
-  if (h.get("sp") && CFG[h.get("sp")]) sport = h.get("sp");
+  if (h.get("sp") && (CFG[h.get("sp")] || isGameSport(h.get("sp")))) sport = h.get("sp");
   if (h.get("s")) ui.stat = h.get("s");
   if (h.get("l")) ui.line = Number(h.get("l"));
   if (h.get("side") === "under") ui.side = "under";
@@ -1344,7 +1561,8 @@ async function switchSport(id, playerId){
   store.set("tradescale:props-sport", id);
   renderSports(); $("picker").innerHTML = ""; $("app").innerHTML = "";
   const status = $("status"); status.classList.remove("warn"); status.textContent = "Loading...";
-  if (!playerId) history.replaceState(null, "", `#sp=${id}`);
+  if (!playerId || isGameSport(id)) history.replaceState(null, "", `#sp=${id}`);
+  if (isGameSport(id)){ gameView = {filter:"", open:null}; await showGames(id); return; }
   try {
     [index, defense] = await Promise.all([getJSON(BASE() + "index.json"), getJSON(BASE() + "defense.json")]);
   } catch(e){
@@ -1367,7 +1585,7 @@ async function switchSport(id, playerId){
 }
 (() => {
   const id = readHash();
-  if (!id) sport = store.get("tradescale:props-sport") || sport;
+  if (!id && !new URLSearchParams(location.hash.slice(1)).get("sp")) sport = store.get("tradescale:props-sport") || sport;   // a link to a sport wins over the last one used
   renderTracker();
   renderSlip();
   switchSport(sport, id);

@@ -32,3 +32,8 @@ jobs:
 
       - name: Cricket reads Cricsheet and ESPN's schedule (writes nothing)
         run: python scripts/update_props_cricket.py --check
+
+      - name: College game model fits, backtests and reads ESPN lines (writes nothing)
+        run: |
+          pip install --quiet pyarrow
+          python scripts/update_college_games.py --check
