@@ -33,13 +33,13 @@ jobs:
       - name: Pull latest players, values and team changes
         run: python scripts/update_players.py
 
-      - name: Build props data (NFL, NBA, NHL, MLB, college football and basketball, UFC)
+      - name: Build props data (NFL, NBA, NHL, MLB, UFC) and college game lines
         continue-on-error: true
         run: |
           pip install --quiet pandas pyarrow
           python scripts/update_props.py || echo "NFL props failed"
           python scripts/update_props_more.py || echo "NBA, NHL or MLB props failed"
-          python scripts/update_props_college.py || echo "College props failed"
+          python scripts/update_college_games.py || echo "College game lines failed"
           python scripts/update_props_ufc.py
 
       - name: Train the prop model on past games

@@ -26,3 +26,8 @@ jobs:
         run: |
           pip install --quiet pandas
           python scripts/update_props_ufc.py --check
+
+      - name: College game model fits, backtests and reads ESPN lines (writes nothing)
+        run: |
+          pip install --quiet pyarrow
+          python scripts/update_college_games.py --check
