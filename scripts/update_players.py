@@ -324,6 +324,18 @@ def write_defense_report(ctx):
           "next": {t: v[1] for t, v in ctx["next"].items()}, "teams": teams})
 
 
+def write_results(ctx, pos_of):
+    """Each finished week's PPR points and opponent per player, so the league page can grade its own
+    projections against what actually happened and retune itself (see comanager.js)."""
+    weeks = {}
+    for w, rows in ctx["weeks"].items():
+        out = {pid: [round(r["pts"], 1), r["opp"] or ""] for pid, r in rows.items() if pos_of.get(pid) in DEF_POS}
+        if out:
+            weeks[str(w)] = out
+    save(os.path.join(DATA, "nfl-results.json"),
+         {"updated": datetime.now(timezone.utc).isoformat(timespec="minutes"), "week": ctx["this_week"], "weeks": weeks})
+
+
 def fetch_sleeper(sport):
     # Sleeper asks that this be called at most once a day, which is exactly what we do.
     raw = get_json(f"https://api.sleeper.app/v1/players/{sport}")
@@ -410,6 +422,7 @@ def fetch_sleeper(sport):
         vor = {r["id"]: ros[r["id"]] - repl[r["pos"]] for r in rows if r["id"] in ros}
         model = values_from_scores(vor, SLEEPER_K[sport], rank_negatives=True)
         write_defense_report(ctx)
+        write_results(ctx, {r["id"]: r["pos"] for r in rows})
     elif sport == "nba":
         rates = {}
         for r in rows:

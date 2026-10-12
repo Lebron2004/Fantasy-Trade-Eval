@@ -4,41 +4,64 @@ const AI = (() => {
   const {store, el} = TS;
   const KEY = "tradescale:ai";
   const MODELS = [
-    ["claude-sonnet-5-5", "Claude Sonnet 5.5 (recommended)"],
-    ["claude-opus-5-5", "Claude Opus 5.5 (deepest analysis)"],
-    ["claude-haiku-4-5-20251001", "Claude Haiku 4.5 (fastest, cheapest)"]
+    ["claude-opus-5-5", "Claude Opus 5.5 (recommended, deepest analysis)"],
+    ["claude-sonnet-5-5", "Claude Sonnet 5.5 (faster, about half the cost)"],
+    ["claude-haiku-5-5", "Claude Haiku 5.5 (fastest, cheapest)"]
   ];
-  const cfg = () => Object.assign({key:"", model: MODELS[0][0]}, store.get(KEY) || {});
+  // Keys saved by older builds may point at retired model names; move them to the closest current one.
+  const RENAMED = {"claude-haiku-4-5-20251001": "claude-haiku-5-5", "claude-haiku-4-5": "claude-haiku-5-5"};
+  const cfg = () => {
+    const c = Object.assign({key:"", model: MODELS[0][0]}, store.get(KEY) || {});
+    c.model = RENAMED[c.model] || c.model;
+    return c;
+  };
   const setCfg = c => store.set(KEY, c);
+  // The newer web search (it filters pages before reading them) runs on Opus and Sonnet; Haiku keeps the basic one.
+  const searchTool = model => ({type: /haiku/.test(model) ? "web_search_20250305" : "web_search_20260209", name: "web_search", max_uses: 6});
 
-  async function call(system, prompt, search){
+  // opts: which optional features to send. Each one is dropped and retried if the API says the account can't use it.
+  async function call(system, messages, opts){
     const c = cfg();
-    const body = {model: c.model, max_tokens: 2000, system, messages: [{role: "user", content: prompt}]};
-    if (search) body.tools = [{type: "web_search_20250305", name: "web_search", max_uses: 5}];
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {"content-type": "application/json", "x-api-key": c.key, "anthropic-version": "2023-06-01",
-                "anthropic-dangerous-direct-browser-access": "true"},
-      body: JSON.stringify(body)
-    });
+    const body = {model: c.model, max_tokens: 16000, system, messages};
+    const headers = {"content-type": "application/json", "x-api-key": c.key, "anthropic-version": "2023-06-01",
+                     "anthropic-dangerous-direct-browser-access": "true"};
+    if (opts.think){ body.thinking = {type: "adaptive"}; body.output_config = {effort: "high"}; }
+    if (opts.search) body.tools = [searchTool(c.model)];
+    // If a safety check declines the answer, let the API retry it on another model instead of failing.
+    if (opts.fallback && !/haiku/.test(c.model)){ body.fallbacks = "default"; headers["anthropic-beta"] = "server-side-fallback-2026-07-01"; }
+    const r = await fetch("https://api.anthropic.com/v1/messages", {method: "POST", headers, body: JSON.stringify(body)});
     const data = await r.json().catch(() => ({}));
     if (!r.ok){ const e = new Error((data.error && data.error.message) || `HTTP ${r.status}`); e.status = r.status; throw e; }
     return data;
   }
 
   async function ask(system, prompt){
-    let data, searched = true;
-    try { data = await call(system, prompt, true); }
-    catch(e){
-      // Web search must be enabled for the API org; if it isn't, still answer without it.
-      if (e.status === 400 && /search|tool/i.test(e.message)){ searched = false; data = await call(system, prompt, false); }
-      else throw e;
+    const opts = {think: true, search: true, fallback: true};
+    const messages = [{role: "user", content: prompt}], blocks = [];
+    let data;
+    for (let turn = 0; turn < 4; turn++){
+      for (;;){
+        try { data = await call(system, messages, opts); break; }
+        catch(e){
+          if (e.status !== 400) throw e;
+          // Turn off whichever optional feature the API objected to, then try again.
+          if (opts.fallback && /fallback|beta/i.test(e.message)) opts.fallback = false;
+          else if (opts.search && /search|tool/i.test(e.message)) opts.search = false;
+          else if (opts.think && /think|effort|output_config/i.test(e.message)) opts.think = false;
+          else throw e;
+        }
+      }
+      blocks.push(...(data.content || []));
+      // A long web search can pause mid-answer; send it back so the model picks up where it left off.
+      if (data.stop_reason !== "pause_turn") break;
+      messages.push({role: "assistant", content: data.content});
     }
-    const blocks = data.content || [];
+    if (data.stop_reason === "refusal" && !blocks.some(b => b.type === "text" && b.text.trim()))
+      return {text: "The AI declined to answer this one. Try rewording the question.", sources: [], searched: opts.search};
     const text = blocks.filter(b => b.type === "text").map(b => b.text).join("");
     const seen = new Map();
     blocks.forEach(b => (b.citations || []).forEach(c => { if (c.url && !seen.has(c.url)) seen.set(c.url, c.title || c.url); }));
-    return {text, sources: [...seen].map(([url, title]) => ({url, title})), searched};
+    return {text, sources: [...seen].map(([url, title]) => ({url, title})), searched: opts.search};
   }
 
   // Minimal, safe markdown: escape everything, then allow bold, headings, and bullet lists.
@@ -96,7 +119,7 @@ const AI = (() => {
       const prompt = buildPrompt(question);
       if (!prompt) return;
       go.disabled = true; go.textContent = "Thinking...";
-      out.innerHTML = ""; out.append(el("p", {class: "empty", style: "margin:0", text: "Reading your data and checking the latest news. This can take 20–40 seconds."}));
+      out.innerHTML = ""; out.append(el("p", {class: "empty", style: "margin:0", text: "Reading your data, checking the latest news, and thinking it through. This can take up to a minute."}));
       try {
         const res = await ask(system(), prompt);
         out.innerHTML = render(res.text || "No answer came back.");
@@ -126,13 +149,21 @@ const AI = (() => {
 
   function system(sportName){
     const today = new Date().toLocaleDateString(undefined, {weekday:"long", year:"numeric", month:"long", day:"numeric"});
-    return `You are a sharp, honest fantasy ${sportName.toLowerCase()} general manager advising one manager. Today is ${today}.
+    return `You are a sharp, honest fantasy ${sportName.toLowerCase()} analyst advising one manager. Today is ${today}.
 
-The app gives you its model data. Every player value is on a 1-100 scale that blends track record (fantasy points actually scored this season and last) with outlook (projections, recent form, usage, rest-of-season schedule strength, injuries, and age). A defense factor above 1 means that defense allows more fantasy points than average to that position, so it's a good matchup; below 1 is a tough one.
+The app gives you its model data. Every player value is on a 1-100 scale that blends track record (fantasy points actually scored this season and last) with outlook (projections, recent form, usage, rest-of-season schedule strength, injuries, and age). Trade value isn't linear: stars are worth more than the sum of lesser players, and the app's package totals already account for that. A rank like "WR14" is where the player sits at his position by value today. A defense factor above 1 means that defense allows more fantasy points than average to that position (a good matchup); below 1 is a tough one. The "trained model" lines come from a model trained on every past game; when it ranks a player well above his trade value he's a buy-low, well below and he's a sell-high. When the app includes rosters and lineup changes, that's the manager's actual league: weigh what the trade does to the starting lineup more than raw value, because bench depth rarely scores points.
 
-Before recommending anything, use web search to check the latest news on the key players involved: injuries and practice reports, depth chart and role changes, trades, suspensions. If the news contradicts the model's numbers, say so plainly and weigh the news more heavily.
+Before ruling, use web search to check the latest news on the key players: injuries and practice reports, depth chart and role changes (snap share, target share, minutes, line deployment, batting order), trades, and suspensions. If the news contradicts the app's numbers, say so plainly and weigh the news more heavily.
 
-Start with a clear recommendation in one or two sentences. Then give the 2-4 reasons that matter most, naming specific players. Keep it under 300 words unless asked for more. Don't use tables.`;
+Think about: who gets the best player in the deal; positional scarcity in this format; how each side's starting lineup changes; rest-of-season schedule; injury and age risk (age matters much more in dynasty); and whether one side is buying at the top of a hot streak or selling at the bottom of a slump.
+
+Answer in this shape, using these bold labels:
+**Ruling:** a letter grade (A+ to F) for the manager's side and one sentence, e.g. "B+: a slight win for you." If you disagree with the app's grade, say why.
+**Why:** 2-4 short bullets, each naming specific players and the concrete reason (role, usage, schedule, injury, news).
+**Counter:** if the deal isn't a clear win, a specific tweak that would make it one (who to add or swap, from the partner's roster when it's given). If it's already a win, say what to watch before accepting.
+**Risk:** one line on what could make this go wrong.
+
+If the question isn't about a single trade (lineup, waivers, team strategy), skip the shape above and answer directly, starting with the recommendation. Keep it under 300 words unless asked for more. Don't use tables. Never invent stats; if you didn't find something, say so.`;
   }
 
   return {panel, render, system};
