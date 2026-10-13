@@ -155,15 +155,19 @@ The app gives you its model data. Every player value is on a 1-100 scale that bl
 
 Before ruling, use web search to check the latest news on the key players: injuries and practice reports, depth chart and role changes (snap share, target share, minutes, line deployment, batting order), trades, and suspensions. If the news contradicts the app's numbers, say so plainly and weigh the news more heavily.
 
+Trade rules: never suggest trading for a team defense or a kicker, or putting one in a package; they're streamed off waivers. Never suggest acquiring a player who is out for the season (the app marks them "OUT FOR THE SEASON", and your news search may find more); in redraft he's worth nothing to either side, so don't count him as a sweetener either. For shorter injuries, discount a player by the share of the remaining games he'll miss. Every offer has to be one the other manager would plausibly accept: close to even value and a reason for them to say yes (it fills a need or upgrades their lineup).
+
+When asked for trade ideas or "best moves", give a range of real options, not one: 3 to 5 distinct offers that go from a small swap to a bigger package built around a star, in different shapes (1-for-1, 2-for-1 consolidation, 1-for-2 depth). Label each **Small**, **Medium**, or **Big**, and give each the partner team, exactly who goes each way, and one line on why it helps you and why they'd say yes. Start from the app's trade ideas, check them against the news, drop any that the news breaks, and add better ones from the rosters if you see them.
+
 Think about: who gets the best player in the deal; positional scarcity in this format; how each side's starting lineup changes; rest-of-season schedule; injury and age risk (age matters much more in dynasty); and whether one side is buying at the top of a hot streak or selling at the bottom of a slump.
 
 Answer in this shape, using these bold labels:
 **Ruling:** a letter grade (A+ to F) for the manager's side and one sentence, e.g. "B+: a slight win for you." If you disagree with the app's grade, say why.
 **Why:** 2-4 short bullets, each naming specific players and the concrete reason (role, usage, schedule, injury, news).
-**Counter:** if the deal isn't a clear win, a specific tweak that would make it one (who to add or swap, from the partner's roster when it's given). If it's already a win, say what to watch before accepting.
+**Counter:** if the deal isn't a clear win, two or three specific tweaks that would make it one, from a small adjustment to a bigger reshape (who to add or swap, from the partner's roster when it's given). If it's already a win, say what to watch before accepting.
 **Risk:** one line on what could make this go wrong.
 
-If the question isn't about a single trade (lineup, waivers, team strategy), skip the shape above and answer directly, starting with the recommendation. Keep it under 300 words unless asked for more. Don't use tables. Never invent stats; if you didn't find something, say so.`;
+If the question isn't about a single trade (lineup, waivers, team strategy), skip the shape above and answer directly, starting with the recommendation. Keep it under 300 words unless asked for more (a list of trade offers can run to 450). Don't use tables. Never invent stats; if you didn't find something, say so.`;
   }
 
   return {panel, render, system};

@@ -10,7 +10,7 @@ const {DEFAULT_SLOTS, GROUPS, FLEX, SKIP_SLOTS, accepts, slotWidth, parseSlots} 
 let leagues = store.get("tradescale:leagues") || [];
 let active = store.get("tradescale:active-league") || {};
 let sport = (store.get("tradescale:v2") || {}).sport || "nfl";
-let view = {creating:false, editing:false, compare:"", ideaTeam:""};
+let view = {creating:false, editing:false, compare:"", ideaTeam:"", ideaSize:""};
 const saveLeagues = () => { store.set("tradescale:leagues", leagues); store.set("tradescale:active-league", active); };
 const sportLeagues = () => leagues.filter(l => l.sport === sport);
 const current = () => sportLeagues().find(l => l.id === active[sport]) || sportLeagues()[0] || null;
@@ -18,7 +18,7 @@ const current = () => sportLeagues().find(l => l.id === active[sport]) || sportL
 /* ---------- Analysis engine ---------- */
 function makeEngine(L){
   const pool = TS.pools[L.sport], sp = L.sport;
-  const val = p => adjusted(p, sp);
+  const val = p => TS.tradeValue(p, sp);   // injuries counted
   const byVal = (a, b) => val(b) - val(a);
   const groups = GROUPS[sp].filter(g => L.slots.some(s => accepts(sp, s, {elig:[g]})));
   const groupOf = p => p.elig.find(e => groups.includes(e)) || (sp === "mlb" && p.elig.includes("OF") ? "OF" : null);
@@ -91,51 +91,76 @@ function modelEdge(give, get, sp){
   return avg(get) - avg(give);
 }
 const pairs = arr => { const out = []; for (let i = 0; i < arr.length; i++) for (let j = i + 1; j < arr.length; j++) out.push([arr[i], arr[j]]); return out; };
+const triples = arr => { const out = []; for (let i = 0; i < arr.length; i++) for (let j = i + 1; j < arr.length; j++) for (let k = j + 1; k < arr.length; k++) out.push([arr[i], arr[j], arr[k]]); return out; };
+
+// Team defenses and kickers get streamed off waivers, so nobody trades for them. Players out for the season
+// aren't trade targets, and nobody takes one in a deal.
+const NO_TRADE = new Set(["DEF", "K"]);
+const canTrade = (p, sp) => !(sp === "nfl" && NO_TRADE.has(p.pos)) && !TS.health(p, sp).season;
+
+// Deal size by the best player in it: a small swap, a mid-size deal, or a big one built around a star.
+const SIZES = [["big", "Big deal", 80, "Big deals"], ["mid", "Mid-size", 60, "Mid-size deals"], ["small", "Small swap", 0, "Small swaps"]];
+const sizeOf = (f, E) => { const top = Math.max(...f.give.concat(f.get).map(E.val)); return SIZES.find(s => top >= s[2])[0]; };
+const sizeLabel = k => (SIZES.find(s => s[0] === k) || [, ""])[1];
+const shapeOf = f => `${f.give.length}-for-${f.get.length}`;
 
 function tradeIdeas(A, me, only){
-  const {E} = A, base = me.prof.lu.total, myTop = [...me.roster].sort(E.byVal).slice(0, 12);
-  const gives = [...myTop.map(p => [p]), ...pairs(myTop)];
+  const {E} = A, sp = E.sp, base = me.prof.lu.total, need = new Set(me.needs);
+  const pieces = roster => roster.filter(p => canTrade(p, sp)).sort(E.byVal).slice(0, 12);
+  const trendCache = new Map(), trend = p => { if (!trendCache.has(p.id)) trendCache.set(p.id, CM.outlook(p, sp).s); return trendCache.get(p.id); };
+  const avgTrend = list => list.reduce((a, p) => a + trend(p), 0) / list.length;
+  const scored = list => list.map(pk => ({pk, ps: packageScore(pk, sp)})).filter(x => x.ps > 0);
+  const myTop = pieces(me.roster);
+  // one-for-one, two-for-one, and three-for-one consolidation trades
+  const gives = scored([...myTop.map(p => [p]), ...pairs(myTop), ...triples(myTop.slice(0, 9))]);
   const found = [];
   for (const T of A.teams){
     if (T.id === me.id || T.roster.length < 3 || (only && T.id !== only)) continue;
-    const tBase = T.prof.lu.total, tTop = [...T.roster].sort(E.byVal).slice(0, 12);
-    const gets = [...tTop.map(p => [p]), ...pairs(tTop)];
-    for (const give of gives){
-      const ps = packageScore(give, E.sp); if (ps <= 0) continue;
-      for (const get of gets){
-        if (give.length === 2 && get.length === 2) continue;
-        const ratio = packageScore(get, E.sp) / ps;
+    const tBase = T.prof.lu.total, tTop = pieces(T.roster);
+    const gets = scored([...tTop.map(p => [p]), ...pairs(tTop)]);
+    for (const {pk: give, ps} of gives){
+      for (const {pk: get, ps: gs} of gets){
+        if (give.length > 1 && get.length > 1) continue;      // keep deals simple: one side sends a single player
+        const ratio = gs / ps;
         if (ratio < 0.85 || ratio > 1.15) continue;          // keep it realistic: roughly even value
         const giveIds = new Set(give.map(p => p.id)), getIds = new Set(get.map(p => p.id));
         const mine = E.lineup(me.roster.filter(p => !giveIds.has(p.id)).concat(get));
-        const myGain = mine.total - base; if (myGain < 3) continue;
+        const small = Math.max(...give.concat(get).map(E.val)) < SIZES[1][2];
+        const myGain = mine.total - base; if (myGain < (small ? 1.5 : 3)) continue;   // small swaps move less, so a smaller gain still counts
         const theirs = E.lineup(T.roster.filter(p => !getIds.has(p.id)).concat(give));
         const theirGain = theirs.total - tBase; if (theirGain < -4) continue;
-        const edge = modelEdge(give, get, E.sp);
-        found.push({team:T, give, get, myGain, theirGain, ratio, after: mine, edge,
-                    score: myGain + 0.5 * Math.max(0, theirGain) + (theirGain >= 0 ? 3 : 0) + 4 * edge});
+        const edge = modelEdge(give, get, sp), lean = avgTrend(get) - avgTrend(give);
+        const fills = get.some(p => need.has(E.groupOf(p)));
+        const f = {team:T, give, get, myGain, theirGain, ratio, after: mine, edge, lean, fills,
+                   score: myGain + 0.5 * Math.max(0, theirGain) + (theirGain >= 0 ? 3 : 0) + 4 * edge + 3 * lean + (fills ? 2 : 0)};
+        f.size = sizeOf(f, E); f.shape = shapeOf(f);
+        found.push(f);
       }
     }
   }
   found.sort((a, b) => b.score - a.score);
-  const usedGet = new Set(), giveCount = {}, out = [];
-  for (const f of found){
-    if (f.get.some(p => usedGet.has(p.id)) || f.give.some(p => (giveCount[p.id] || 0) >= 2)) continue;
-    f.get.forEach(p => usedGet.add(p.id)); f.give.forEach(p => giveCount[p.id] = (giveCount[p.id] || 0) + 1);
-    out.push(f); if (out.length === 8) break;
-  }
-  return out;
+  // Pick a varied list: the best few of each size, every deal shape that works, then the best of the rest.
+  const usedGet = new Set(), giveCount = {}, teamCount = {}, out = [];
+  const ok = f => !out.includes(f) && !f.get.some(p => usedGet.has(p.id)) && !f.give.some(p => (giveCount[p.id] || 0) >= 2)
+    && (only || (teamCount[f.team.id] || 0) < 3);
+  const take = f => { f.get.forEach(p => usedGet.add(p.id)); f.give.forEach(p => giveCount[p.id] = (giveCount[p.id] || 0) + 1);
+    teamCount[f.team.id] = (teamCount[f.team.id] || 0) + 1; out.push(f); };
+  SIZES.forEach(([k]) => found.filter(f => f.size === k).filter(ok).slice(0, 1).forEach(take));
+  ["2-for-1", "3-for-1", "1-for-2"].forEach(sh => { if (!out.some(f => f.shape === sh)){ const f = found.find(f => f.shape === sh && ok(f)); if (f) take(f); } });
+  SIZES.forEach(([k]) => { let n = out.filter(f => f.size === k).length; for (const f of found){ if (n >= 3) break; if (f.size === k && ok(f)){ take(f); n++; } } });
+  for (const f of found){ if (out.length >= 12) break; if (ok(f)) take(f); }
+  return out.sort((a, b) => b.score - a.score);
 }
 
 // No other rosters entered: point the user's surplus at the kind of player they should target.
 function tradeTargets(A, me){
   const {E} = A, taken = new Set(A.teams.flatMap(t => t.players.map(String)));
-  const chips = me.prof.lu.bench.filter(p => E.val(p) >= 20).slice(0, 3);
+  const chips = me.prof.lu.bench.filter(p => E.val(p) >= 20 && canTrade(p, E.sp)).slice(0, 3);
   const out = [];
   for (const g of me.needs.slice(0, 2)){
     for (const chip of chips){
       const cv = E.val(chip), baseTotal = me.prof.lu.total;
-      const targets = E.pool.filter(p => !taken.has(p.id) && E.groupOf(p) === g && E.val(p) >= cv * 0.8 && E.val(p) <= cv * 1.1)
+      const targets = E.pool.filter(p => !taken.has(p.id) && canTrade(p, E.sp) && !TS.HURT.has(p.inj) && E.groupOf(p) === g && E.val(p) >= cv * 0.8 && E.val(p) <= cv * 1.1)
         .filter(p => E.lineup(me.roster.filter(q => q.id !== chip.id).concat(p)).total - baseTotal > 2)
         .sort(E.byVal).slice(0, 5);
       if (targets.length){ out.push({group:g, chip, targets}); break; }
@@ -385,8 +410,8 @@ function playoffs(L, A, me, B, override, n){
 
 /* Fair offers for one player: the package from your roster closest to even value that helps your lineup most. */
 function offerFor(A, me, target, owner){
-  const {E} = A, sp = E.sp, ts = packageScore([target], sp); if (ts <= 0) return null;
-  const mine = [...me.roster].sort(E.byVal).slice(0, 14), base = me.prof.lu.total;
+  const {E} = A, sp = E.sp, ts = packageScore([target], sp); if (ts <= 0 || !canTrade(target, sp)) return null;
+  const mine = me.roster.filter(p => canTrade(p, sp)).sort(E.byVal).slice(0, 14), base = me.prof.lu.total;
   let best = null;
   for (const give of [...mine.map(p => [p]), ...pairs(mine)]){
     const r = packageScore(give, sp) / ts;
@@ -402,7 +427,9 @@ function offerFor(A, me, target, owner){
 function returnFor(A, me, p, others){
   const {E} = A, sp = E.sp, ps = packageScore([p], sp), base = me.prof.lu.total, need = new Set(me.needs);
   let best = null;
+  if (!canTrade(p, sp)) return null;
   others.forEach(T => T.roster.forEach(q => {
+    if (!canTrade(q, sp)) return;
     const r = packageScore([q], sp) / ps;
     if (r < 0.8 || r > 1.1) return;
     const myGain = E.lineup(me.roster.filter(x => x.id !== p.id).concat(q)).total - base;
@@ -421,7 +448,7 @@ function buyList(L, A, me, B){
   const pool = others.length ? others.flatMap(t => t.roster) : E.pool.filter(p => !mine.has(p.id) && E.val(p) >= 15).slice(0, 300);
   const out = [];
   pool.forEach(p => {
-    if (E.val(p) < 10 || E.val(p) > cap || TS.HURT.has(p.inj)) return;
+    if (E.val(p) < 10 || E.val(p) > cap || TS.HURT.has(p.inj) || !canTrade(p, sp)) return;
     const o = CM.outlook(p, sp); if (o.s < 0.2) return;
     const g = E.groupOf(p), starts = E.lineup(me.roster.concat(p)).total - base > 1;
     const s = o.s + (need.has(g) ? 0.25 : 0) + (starts ? 0.15 : 0);
@@ -434,7 +461,7 @@ function sellList(L, A, me, B){
   const {E} = A, sp = L.sport, others = A.teams.filter(t => t.id !== me.id && t.roster.length >= 3);
   const starters = new Set(me.prof.lu.starters.filter(Boolean).map(p => p.id)), out = [];
   me.roster.forEach(p => {
-    if (E.val(p) < 12) return;
+    if (E.val(p) < 12 || !canTrade(p, sp)) return;
     const o = CM.outlook(p, sp), surplus = !starters.has(p.id) && E.val(p) >= 25;
     let s = -o.s; const why = o.s < 0 ? o.why.slice() : [];
     if (surplus){ s += 0.3; why.push("he doesn't crack your starting lineup, so his value is sitting on your bench"); }
@@ -669,12 +696,16 @@ function renderOffers(box, L, A, me, B){
   tsel.append(el("option", {value:"", text:"All teams"}));
   others.forEach(t => tsel.append(el("option", {value:t.id, text:t.name, selected: t.id === view.ideaTeam ? "" : false})));
   tsel.onchange = () => { view.ideaTeam = tsel.value; render(); };
-  ti.append(el("p", {class:"sub", text:"Deals within about 15% of even value that improve your starting lineup without gutting the other team's, so they have a real reason to say yes. Each shows how it moves your playoff odds and how likely they are to accept."}),
-    el("div", {style:"margin-bottom:12px"}, tsel));
-  const ideas = view.ideaTeam ? tradeIdeas(A, me, view.ideaTeam) : B.ideas();
-  lastIdeas = ideas;
+  const zsel = el("select", {class:"inline", "aria-label":"Deal size"});
+  [["", "All sizes"], ...SIZES.map(([k, , , many]) => [k, many])].forEach(([k, label]) => zsel.append(el("option", {value:k, text:label, selected: k === (view.ideaSize || "") ? "" : false})));
+  zsel.onchange = () => { view.ideaSize = zsel.value; render(); };
+  ti.append(el("p", {class:"sub", text:"Deals within about 15% of even value that improve your starting lineup without gutting the other team's, so they have a real reason to say yes. You get a mix: small swaps, mid-size deals, and big ones built around a star, in one-for-one, two-for-one, and three-for-one shapes. Values count injuries, players out for the season are left out, and so are defenses and kickers, since those come off waivers."}),
+    el("div", {class:"bar-row", style:"margin-bottom:12px"}, tsel, zsel));
+  const all = view.ideaTeam ? tradeIdeas(A, me, view.ideaTeam) : B.ideas();
+  const ideas = view.ideaSize ? all.filter(f => f.size === view.ideaSize) : all;
+  lastIdeas = all;
   const list = el("div", {class:"ideas"});
-  if (!ideas.length) list.append(el("p", {class:"empty", style:"margin:0", text:"No even-value trade improves your lineup right now. Try another team, or lean the Value by slider the other way."}));
+  if (!ideas.length) list.append(el("p", {class:"empty", style:"margin:0", text: all.length ? "No deal of that size works right now. Try another size or team." : "No even-value trade improves your lineup right now. Try another team, or lean the Value by slider the other way."}));
   ideas.forEach((f, i) => {
     const card = ideaCard(f, me, E, L);
     const bar = card.querySelector(".foot .bar-row");
@@ -865,7 +896,7 @@ function leaguePrompt(L, A, me, q, B){
   const others = A.teams.filter(t => t.id !== me.id && t.roster.length);
   if (others.length){
     out.push("", "OTHER TEAMS (top players, needs):");
-    others.slice(0, 15).forEach(t => out.push(`- ${t.name}: needs ${t.needs.slice(0, 2).join(", ") || "nothing"}; strong at ${t.strengths.slice(0, 2).join(", ") || "nothing"}; top: ${[...t.roster].sort(E.byVal).slice(0, 5).map(p => `${p.name} ${p.pos} ${fmt(E.val(p))}`).join(", ")}`));
+    others.slice(0, 15).forEach(t => out.push(`- ${t.name}: needs ${t.needs.slice(0, 2).join(", ") || "nothing"}; strong at ${t.strengths.slice(0, 2).join(", ") || "nothing"}; top: ${t.roster.filter(p => canTrade(p, sp)).sort(E.byVal).slice(0, 6).map(p => `${p.name} ${p.pos} ${fmt(E.val(p))}${p.inj ? ` (${p.inj})` : ""}`).join(", ")}`));
   }
   if (B){
     const po = B.po(), my = po.res && po.res.teams[me.id];
@@ -882,9 +913,15 @@ function leaguePrompt(L, A, me, q, B){
       sells.forEach(x => out.push(`- ${x.p.name} (${x.p.pos}): ${x.why.join("; ")}${x.offer ? `. Best return: ${x.offer.get[0].name} from ${x.offer.team.name}` : ""}`)); }
     if (!lastIdeas.length) lastIdeas = B.ideas();
   }
+  const outSeason = A.teams.flatMap(t => t.roster.filter(p => TS.health(p, sp).season).map(p => `${p.name} (${p.pos}, ${t.id === me.id ? "my team" : t.name})`));
+  if (outSeason.length) out.push("", `OUT FOR THE SEASON (never trade for these; in redraft they have no value to anyone): ${outSeason.join(", ")}`);
   if (lastIdeas.length){
-    out.push("", "TRADE IDEAS FROM THE APP'S MODEL:");
-    lastIdeas.slice(0, 6).forEach(f => out.push(`- Send ${f.give.map(p => p.name).join(" + ")} to ${f.team.name} for ${f.get.map(p => p.name).join(" + ")} (my lineup +${fmt(f.myGain)}, theirs ${f.theirGain >= 0 ? "+" : ""}${fmt(f.theirGain)}${Math.abs(f.edge) >= 0.3 ? `, trained model ${f.edge > 0 ? "likes" : "is wary of"} it` : ""})`));
+    out.push("", "TRADE IDEAS FROM THE APP'S MODEL (even value, injuries counted, no defenses or kickers), by size:");
+    SIZES.forEach(([k, , , many]) => {
+      const list = lastIdeas.filter(f => f.size === k).slice(0, 4);
+      if (list.length) out.push(`${many}:`);
+      list.forEach(f => out.push(`- ${f.shape}: send ${f.give.map(p => p.name).join(" + ")} to ${f.team.name} for ${f.get.map(p => p.name).join(" + ")} (my lineup +${fmt(f.myGain)}, theirs ${f.theirGain >= 0 ? "+" : ""}${fmt(f.theirGain)}${f.fills ? ", fills one of my needs" : ""}${Math.abs(f.edge) >= 0.3 ? `, trained model ${f.edge > 0 ? "likes" : "is wary of"} it` : ""})`));
+    });
   }
   if (lastPickups){
     const pk = [...lastPickups.starts.map(s => `${s.p.name} (${s.p.pos}, would start at ${s.slot}, +${fmt(s.gain)})`), ...lastPickups.stash.map(s => `${s.p.name} (${s.p.pos}, depth)`)];
@@ -1196,7 +1233,7 @@ function renderAIPanel(app, L, A, me, B){
   app.append(box);
   AI.panel(host, {
     intro: "It reads your whole league from this page, checks today's injury news and depth charts, and tells you what to do.",
-    presets: ["Give me my game plan for this week", "What are my best moves this week?", "Who should I start this week?", "Find me a trade for my weakest spot", "Who should I pick up?"],
+    presets: ["Give me my game plan for this week", "What are my best moves this week?", "Who should I start this week?", "Give me trade offers from small to big", "Find me a trade for my weakest spot", "Who should I pick up?"],
     system: () => AI.system(TS.sportName(L.sport)),
     buildPrompt: q => leaguePrompt(L, A, me, q, B)
   });
@@ -1232,14 +1269,18 @@ function ideaCard(f, me, E, L){
   };
   f.get.forEach(p => say(p, "get")); f.give.forEach(p => say(p, "give"));
   const modelWhy = modelBits.length ? " " + modelBits.join(" ") : "";
+  const hurt = f.get.concat(f.give).filter(p => TS.health(p, L.sport).f < 1).map(p => `${p.name} is ${p.inj === "IR" ? "on IR" : (p.inj || "hurt").toLowerCase()} (${TS.health(p, L.sport).text}), and his value here counts that`);
+  const spots = f.give.length - f.get.length;
+  const extraWhy = (hurt.length ? ` ${cap1(hurt.join("; "))}.` : "") + (spots > 0 ? ` They'll need ${spots} open roster spot${spots > 1 ? "s" : ""}, and you free up as many for waiver pickups.` : spots < 0 ? ` You'll need ${-spots} open roster spot${spots < -1 ? "s" : ""}.` : "");
   return el("div", {class:"idea"},
     el("div", {class:"deal"},
       el("div", {class:"give"}, el("h4", {text:"You send"}), ...f.give.map(p => playerLine(p, E))),
       el("span", {class:"arrow", text:"→"}),
       el("div", {class:"get"}, el("h4", {text:`From ${f.team.name}`}), ...f.get.map(p => playerLine(p, E)))),
-    el("p", {class:"why", text:(why ? why + "." : "") + theirWhy + modelWhy}),
+    el("p", {class:"why", text:(why ? why + "." : "") + theirWhy + modelWhy + extraWhy}),
     el("div", {class:"foot"},
       el("div", {class:"bar-row"},
+        f.size ? el("span", {class:"chip", text:`${sizeLabel(f.size)} · ${f.shape}`}) : null,
         el("span", {class:"chip up", text:`Your lineup +${fmt(f.myGain)}`}),
         el("span", {class:`chip ${f.theirGain >= 0 ? "up" : "down"}`, text:`Theirs ${f.theirGain >= 0 ? "+" : ""}${fmt(f.theirGain)}`}),
         el("span", {class:"chip", text: Math.abs(fairness) <= 5 ? "Even value" : fairness > 0 ? `You get ${fairness}% more value` : `You pay ${-fairness}% extra`}),
