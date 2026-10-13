@@ -135,8 +135,57 @@ const TS = (() => {
     if (key) valueCache.set(key, v);
     return v;
   }
+  /* ---------- Injuries in trade value ---------- */
+  // News that says a player won't be back this season. Notes saying he's returning don't count.
+  const SEASON_OVER = /season[- ]ending|\b(?:out|lost|sidelined?|shut down|miss(?:es|ing)?)\b[^.;]{0,40}?\b(?:for|the) (?:the )?(?:rest of the |remainder of the )?(?:season|year)\b(?! (?:opener|debut))|\b(?:rest|remainder) of the (?:regular )?season\b/i;
+  const COMING_BACK = /\b(?:return(?:s|ed|ing)?|activated|back from|cleared|debut)\b/i;
+  // Games a designation usually costs (football) and the share of value kept (other sports, no games-left count).
+  const MISS_NFL = {IR:5, PUP:5, NA:6, Sus:2, Out:1, Doubtful:0.6, Questionable:0.15};
+  const KEEP = {IL60:0.7, IR:0.75, NA:0.85, Sus:0.9, IL15:0.9, IL10:0.93, IL7:0.96, Out:0.95, Doubtful:0.97, DTD:0.99, GTD:0.99, Questionable:0.99};
+  function seasonOver(p, sport){
+    if (p.custom) return null;
+    const status = p.inj || ((newsFile && newsFile.inj && newsFile.inj[sport]) || {})[p.id];
+    if (!status) return null;   // off the injury report: whatever the old news said, he's back
+    const flagged = newsFile && newsFile.out && newsFile.out[sport] && newsFile.out[sport][p.id];
+    if (flagged) return flagged.text || "Out for the season.";
+    const hit = newsFor(sport, p.id).find(i => (i.kind === "note" || i.kind === "headline") && SEASON_OVER.test(i.text || "") && !COMING_BACK.test(i.text || ""));
+    return hit ? hit.text : null;
+  }
+  // How healthy a player is for trade purposes: f is the share of his rest-of-season value he keeps.
+  const healthCache = new Map();
+  function health(p, sport){
+    const key = sport + ":" + p.id;
+    if (!p.custom && healthCache.has(key)) return healthCache.get(key);
+    const dyn = settings.mode === "dynasty";
+    let h = {f: 1, season: false, text: ""};
+    const over = seasonOver(p, sport);
+    if (over) h = {f: dyn ? 0.6 : 0.03, season: true, text: "out for the season"};
+    else if (p.inj && sport === "nfl" && MISS_NFL[p.inj] != null){
+      const gl = (p.x && p.x.gl) || 10, miss = Math.min(MISS_NFL[p.inj], gl);
+      const f = Math.max(0.1, (gl - miss) / gl);
+      h = {f: dyn ? 1 - (1 - f) * 0.4 : f, season: false, text: miss >= 1 ? `likely misses about ${Math.round(miss)} of ${gl} games left` : "may miss this week"};
+    } else if (p.inj && KEEP[p.inj] != null){
+      const f = KEEP[p.inj];
+      h = {f: dyn ? 1 - (1 - f) * 0.4 : f, season: false, text: "injured"};
+    }
+    if (!p.custom && news[sport]) healthCache.set(key, h);   // don't remember answers given before the news loaded
+    return h;
+  }
+  // Value for trading: today's value with injuries counted. Football outlook already discounts injuries,
+  // so a short-term injury only trims the track-record share; a season-ending one trims everything.
+  function tradeValue(p, sport){
+    const v = adjusted(p, sport);
+    if (p.custom || p.edited) return v;
+    const h = health(p, sport);
+    if (h.f >= 1) return v;
+    if (h.season || sport !== "nfl" || p.prod == null || p.outlook == null) return v * h.f;
+    const u = settings.upside / 100, base = u * p.outlook + (1 - u) * p.prod;
+    const track = base > 0 ? (1 - u) * p.prod / base : 0;
+    return v * (1 - track * (1 - h.f));
+  }
+  onSettings(() => healthCache.clear());
   // Stars beat depth: each value goes through a power curve before summing.
-  const packageScore = (list, sport) => list.reduce((s,p) => s + 100 * Math.pow(Math.max(0, adjusted(p, sport))/100, 1.6), 0);
+  const packageScore = (list, sport) => list.reduce((s,p) => s + 100 * Math.pow(Math.max(0, tradeValue(p, sport))/100, 1.6), 0);
 
   /* ---------- Small UI helpers ---------- */
   const el = (tag, props = {}, ...kids) => {
@@ -202,7 +251,11 @@ const TS = (() => {
     const rk = posRank(p, sport); if (rk) parts.push(`ranked ${rk} by value`);
     if (p.prod != null) parts.push(`track record ${p.prod}`);
     if (p.outlook != null) parts.push(`outlook ${p.outlook}`);
-    if (p.inj) parts.push(`injury: ${p.inj}`);
+    if (p.inj){
+      const h = health(p, sport);
+      parts.push(h.season ? `injury: ${p.inj}, OUT FOR THE SEASON (trade value ${Math.round(tradeValue(p, sport))}; not a trade target)`
+        : `injury: ${p.inj}${h.f < 1 ? `, ${h.text}, trade value with that counted ${Math.round(tradeValue(p, sport))}` : ""}`);
+    }
     if (x.ppg != null) parts.push(`${x.ppg} ppg this season`);
     if (x.form != null) parts.push(`${x.form} ppg last 4`);
     if (x.proj != null) parts.push(`${x.proj} projected ppg`);
@@ -366,7 +419,7 @@ const TS = (() => {
   }
 
   return {SPORTS, sportName, store, settings, setSetting, onSettings, getJSON, norm, pools, loadSport,
-          ageOf, adjusted, packageScore, el, injTag, metaText, splitText, toItem, settingsBar, makeSearch, ago,
+          ageOf, adjusted, tradeValue, health, packageScore, el, injTag, metaText, splitText, toItem, settingsBar, makeSearch, ago,
           matchupWord, matchupTag, insightText, aiLine, chanceTier, chanceClass,
           signalOf, signalText, signalTag, newsFor, allNews, newsLine, newsWhen, HURT, LINEUP, posRank};
 })();

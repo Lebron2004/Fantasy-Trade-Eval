@@ -32,6 +32,23 @@ ESPN_STATUS = {"active": "", "out": "Out", "injured reserve": "IR", "day-to-day"
                "suspension": "Sus", "suspended": "Sus", "10-day-il": "IL10", "15-day-il": "IL15", "60-day-il": "IL60", "7-day-il": "IL7"}
 
 
+# Notes that say a player won't be back this season (keep in step with SEASON_OVER in site/assets/core.js).
+SEASON_OVER = re.compile(r"season[- ]ending|\b(?:out|lost|sidelined?|shut down|miss(?:es|ing)?)\b[^.;]{0,40}?\b(?:for|the) (?:the )?"
+                         r"(?:rest of the |remainder of the )?(?:season|year)\b(?! (?:opener|debut))|\b(?:rest|remainder) of the (?:regular )?season\b", re.I)
+COMING_BACK = re.compile(r"\b(?:return(?:s|ed|ing)?|activated|back from|cleared|debut)\b", re.I)
+
+
+def season_over(sport, found, prev_out, status):
+    """Players ruled out for the season: {id: {d, text}}. A flag sticks after its note ages out of the feed,
+    and clears once the player is off the injury report."""
+    out = {pid: v for pid, v in (prev_out or {}).items() if status.get(pid)}
+    for i in sorted(found, key=lambda i: i["d"]):
+        t = i.get("text") or ""
+        if i["kind"] in ("note", "headline") and status.get(i["id"]) and SEASON_OVER.search(t) and not COMING_BACK.search(t):
+            out[i["id"]] = {"d": i["d"], "text": t[:240]}
+    return out
+
+
 def norm(name):
     s = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode().lower()
     s = re.sub(r"[.'\-]", "", s)
@@ -159,6 +176,8 @@ def main():
     path = os.path.join(DATA, "news.json")
     old = load(path, {})
     prev_inj = old.get("inj") or {}
+    prev_out = old.get("out") or {}
+    out_season = {}
     items = list(old.get("items") or [])
     inj = {}
     espn_ok = 0
@@ -196,6 +215,11 @@ def main():
             if sport in prev_inj:
                 inj[sport] = prev_inj[sport]   # ESPN was down: keep the old snapshot so tomorrow's diff is fair
         found += changes
+        if sport in inj:
+            out_season[sport] = season_over(sport, found, prev_out.get(sport), inj[sport])
+            print(f"{sport} news: {len(out_season[sport])} players out for the season")
+        elif sport in prev_out:
+            out_season[sport] = prev_out[sport]
         print(f"{sport} news: {sum(i['kind'] == 'injury' for i in found)} injury changes, {sum(i['kind'] == 'note' for i in found)} injury notes, "
               f"{sum(i['kind'] == 'headline' for i in found)} headline mentions")
         if dry:
@@ -222,7 +246,7 @@ def main():
         print(f"dry run: {len(out)} items, {espn_ok} ESPN feeds read, nothing written")
         sys.exit(0 if espn_ok else 1)   # the PR check fails if ESPN couldn't be read at all
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"updated": stamp, "items": out, "inj": inj}, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump({"updated": stamp, "items": out, "inj": inj, "out": out_season}, f, ensure_ascii=False, separators=(",", ":"))
     print(f"news: {len(out)} items")
 
 

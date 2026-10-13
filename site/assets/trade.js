@@ -1,6 +1,6 @@
 /* Trade calculator page */
 (() => {
-const {SPORTS, store, settings, el, adjusted, packageScore, injTag, metaText, splitText, toItem} = TS;
+const {SPORTS, store, settings, el, tradeValue, health, packageScore, injTag, metaText, splitText, toItem} = TS;
 const $ = id => document.getElementById(id);
 let meta = {}, moves = [], movesShown = 20;
 
@@ -47,8 +47,9 @@ function renderSide(side){
     const st = TS.signalTag(p, sport); if (st) n.append(st);
     let m = metaText(p);
     if (p.gone) m += ", no longer on a roster";
-    const adj = Math.round(adjusted(p, sport));
+    const adj = Math.round(tradeValue(p, sport));
     if (p.edited) m += ", your value";
+    else if (p.inj && health(p, sport).f < 1) m += `, ${health(p, sport).text} (value counts it)`;
     const split = splitText(p);
     const ins = TS.insightText(p);
     const sig = TS.signalText(p, sport), nw = TS.newsFor(sport, p.id)[0];
@@ -87,8 +88,11 @@ function renderScale(){
       if (edge >= 0.3) detail.textContent += " The trained model leans your way: it rates the players you get above their trade value.";
       else if (edge <= -0.3) detail.textContent += " The trained model leans the other way: it rates the players you send above their trade value.";
     }
-    const hurt = t.get.filter(p => TS.HURT.has(p.inj));
+    const done = t.get.filter(p => health(p, sport).season), hurt = t.get.filter(p => !done.includes(p) && TS.HURT.has(p.inj));
+    if (done.length) detail.textContent += ` Don't trade for ${done.map(p => p.name).join(" or ")}: out for the season.`;
     if (hurt.length) detail.textContent += ` Heads up: ${hurt.map(p => `${p.name} is ${p.inj === "IR" ? "on IR" : p.inj.toLowerCase()}`).join(", ")}.`;
+    const dk = sport === "nfl" ? t.get.concat(t.send).filter(p => p.pos === "DEF" || p.pos === "K") : [];
+    if (dk.length) detail.textContent += ` ${dk.map(p => p.name).join(" and ")} ${dk.length > 1 ? "are" : "is a"} ${dk.length > 1 ? "defenses or kickers" : dk[0].pos === "K" ? "kicker" : "defense"}: you can usually stream one off waivers instead.`;
     const spots = t.get.length - t.send.length;
     if (spots > 0) detail.textContent += ` You'll need ${spots} open roster spot${spots>1?"s":""}.`;
     if (spots < 0) detail.textContent += ` You free up ${-spots} roster spot${spots<-1?"s":""}.`;
@@ -115,7 +119,7 @@ function leagueContext(sport, t){
   return {L, me, roster: resolve(me.players), partner, partnerRoster: partner ? resolve(partner.players) : null};
 }
 function lineupSwap(sport, slots, roster, out, inc){
-  const val = p => adjusted(p, sport), outIds = new Set(out.map(p => String(p.id)));
+  const val = p => tradeValue(p, sport), outIds = new Set(out.map(p => String(p.id)));
   const before = TS.LINEUP.bestLineup(sport, slots, roster, val);
   const after = TS.LINEUP.bestLineup(sport, slots, roster.filter(p => !outIds.has(String(p.id))).concat(inc), val);
   const b = new Set(before.starters.filter(Boolean).map(p => String(p.id))), a = new Set(after.starters.filter(Boolean).map(p => String(p.id)));
@@ -302,9 +306,9 @@ function tradePrompt(q){
   const lg = `${settings.mode}${sp === "nfl" ? `, ${fmt} scoring, ${settings.qb === "sf" ? "superflex" : "1 QB"}` : ""}`;
   const lines = list => list.length ? list.map(p => "- " + (p.custom ? `${p.name} (custom player, value ${p.value})` : TS.aiLine(p, sp))).join("\n") : "- (nobody yet)";
   const r = tradeReport(), ctx = leagueContext(sp, t);
-  const short = p => `${p.name} (${p.pos}${TS.posRank(p, sp) ? " " + TS.posRank(p, sp) : ""}, ${Math.round(adjusted(p, sp))}${p.inj ? ", " + p.inj : ""})`;
+  const short = p => `${p.name} (${p.pos}${TS.posRank(p, sp) ? " " + TS.posRank(p, sp) : ""}, ${Math.round(tradeValue(p, sp))}${p.inj ? ", " + p.inj : ""})`;
   const roster = (title, players) => {
-    const lu = TS.LINEUP.bestLineup(sp, ctx.L.slots, players, p => adjusted(p, sp));
+    const lu = TS.LINEUP.bestLineup(sp, ctx.L.slots, players, p => tradeValue(p, sp));
     return `${title} starters: ${lu.starters.map((p, i) => `${ctx.L.slots[i]} ${p ? short(p) : "(empty)"}`).join("; ")}
 ${title} bench: ${lu.bench.slice(0, 12).map(short).join("; ") || "(none)"}`;
   };
