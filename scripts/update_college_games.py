@@ -417,6 +417,9 @@ def build(sport, check=False):
                   "half_life": int(half), "shrink": lam},
         "backtest": {"season": names[cur - 1], **{k: v for k, v in s.items() if k not in ("sd", "sd_total", "k", "k_total")}},
         "teams": team_rows, "games": games,
+        # the last few weeks of final scores, so scripts/analytics.py can grade the picks the page showed
+        "results": [[d, h, a, int(hp), int(ap)] for d, h, a, hp, ap in
+                    played.loc[played["date"] >= (TODAY - timedelta(days=21)).isoformat(), ["date", "home", "away", "hp", "ap"]].itertuples(index=False)],
     }
     lined = sum(1 for x in games if x["line"] and x["line"].get("spread") is not None)
     top = ", ".join(f"{t} {R.rating(t):+.1f}" for t in ranked[:5])
