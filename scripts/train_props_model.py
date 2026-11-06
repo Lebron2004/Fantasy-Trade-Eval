@@ -549,6 +549,15 @@ def train_sport(sport, lgb):
         if m.sum() >= 200:
             by_stat[k] = {"n": int(m.sum()), "trained": round(logloss(y[m], p_ml[m]), 4), "formula": round(logloss(y[m], te["hand_p"].to_numpy()[m]), 4)}
     report["by_stat"] = by_stat
+    # held-out picks: take the side the model favors at each default line and see how often it hit, by how sure it was
+    conf = np.maximum(p_ml[dm], 1 - p_ml[dm])
+    hit = np.where(p_ml[dm] >= 0.5, y[dm], 1 - y[dm])
+    picks = []
+    for lo, hi in ((0.5, 0.55), (0.55, 0.6), (0.6, 0.65), (0.65, 0.7), (0.7, 1.01)):
+        m = (conf >= lo) & (conf < hi)
+        if m.sum() >= 30:
+            picks.append([lo, min(hi, 1.0), int(m.sum()), round(float(conf[m].mean()), 3), round(float(hit[m].mean()), 3)])
+    report["picks"] = picks
     beats = report["default_lines"]["trained"]["log_loss"] < report["default_lines"]["formula"]["log_loss"] and \
         report["all_lines"]["trained"]["log_loss"] < report["all_lines"]["formula"]["log_loss"]
     dr = report["default_lines"]

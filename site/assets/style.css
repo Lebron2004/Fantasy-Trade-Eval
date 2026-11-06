@@ -538,3 +538,31 @@ li.pick small{display:block;color:var(--muted);font-size:.84rem}
 input.num{width:5.5rem;border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:10px;padding:6px 8px;font-size:.95rem}
 input.num.rec{width:3.4rem;padding:3px 6px;margin:0 2px}
 @media (max-width:560px){.plan li{grid-template-columns:1fr auto}.plan .tag{grid-column:1 / -1}.tile b{font-size:1.6rem}}
+
+/* Analytics: bullet bars (bar = what happened, tick = what was expected), results list, running-profit line */
+.an-bars{display:grid;gap:8px;margin:4px 0 6px}
+.an-row{display:grid;grid-template-columns:minmax(6rem,11rem) minmax(0,1fr) 8.5rem;gap:12px;align-items:center}
+.an-row .an-l{color:var(--muted);font-size:.88rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.an-row .bar{height:14px}
+.an-row .bar .avg{width:3px;opacity:.8;border-radius:2px}
+.an-row b{font-family:var(--display);font-size:1.1rem;text-align:right;white-space:nowrap}
+.an-t{width:100%;border-collapse:collapse;font-size:.93rem}
+.an-t th{text-align:left;color:var(--brand);font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;padding:6px 10px 6px 0;border-bottom:1px solid var(--line);white-space:nowrap}
+.an-t td{padding:8px 10px 8px 0;border-bottom:1px solid var(--line);white-space:nowrap}
+.an-t tr:last-child td{border-bottom:0}
+.an-res{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px}
+.an-res li{display:grid;grid-template-columns:1.6rem minmax(0,1fr);gap:10px;align-items:start;border:1px solid var(--line);border-left:5px solid var(--line);border-radius:12px;padding:9px 12px}
+.an-res li small{display:block;color:var(--muted);font-size:.84rem}
+.an-res .ic{font-weight:800;font-size:1.1rem;text-align:center;color:var(--muted)}
+.an-res li.r-W{border-left-color:var(--ch-5)} .an-res li.r-W .ic{color:var(--ch-5)}
+.an-res li.r-L{border-left-color:var(--ch-1)} .an-res li.r-L .ic{color:var(--ch-1)}
+.an-chart{position:relative}
+.an-line{width:100%;height:auto;display:block;touch-action:none}
+.an-line text{fill:var(--muted);font-size:11px;font-family:var(--body)}
+.an-line .grid{stroke:var(--line);stroke-width:1}
+.an-line .zero{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
+.an-line .ln{fill:none;stroke:var(--brand);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.an-line .dot{fill:var(--brand);stroke:var(--surface);stroke-width:2}
+.an-tip{position:absolute;top:0;transform:translateX(-50%);background:var(--ink);color:var(--paper);font-size:.8rem;padding:4px 8px;border-radius:8px;white-space:nowrap;pointer-events:none}
+.sports [data-sport="all"]{--sp:var(--brand)}
+@media (max-width:560px){.an-row{grid-template-columns:5.5rem minmax(0,1fr) 6.5rem;gap:8px}.an-res{grid-template-columns:1fr}}

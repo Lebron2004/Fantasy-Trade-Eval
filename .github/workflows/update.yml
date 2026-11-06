@@ -74,6 +74,10 @@ jobs:
         continue-on-error: true
         run: python scripts/best_bets.py
 
+      - name: Grade past picks and update the analytics track record
+        continue-on-error: true
+        run: python scripts/analytics.py
+
       - name: Sync ESPN and Yahoo leagues
         continue-on-error: true
         run: python scripts/sync_leagues.py
