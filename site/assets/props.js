@@ -1367,7 +1367,8 @@ async function modelTeamLeg(leg){
     } catch(e){}
   }
   leg.model = model != null;
-  leg.p = leg.mine != null ? leg.mine : model != null ? model : leg.odds != null ? fairFromOdds(leg.odds) : null;
+  // a prediction-market price ("57%") is already the market's chance, with no vig to take out
+  leg.p = leg.mine != null ? leg.mine : model != null ? model : leg.price != null ? leg.price : leg.odds != null ? fairFromOdds(leg.odds) : null;
   if (leg.start === undefined){
     leg.start = null;
     try {
@@ -1608,7 +1609,7 @@ function trackSlip(){
   const legs = slip.legs.filter(l => l.p != null).map(l => l.unsupported
     ? {unsupported: true, text: l.text, p: l.p, pre: l.p, manual: null}
     : l.kind === "team"
-    ? {kind: "team", sport: l.sport, market: l.market, team: l.team, opp: l.opp, line: l.line, side: l.side, odds: l.odds, pre: l.p, start: l.start}
+    ? {kind: "team", sport: l.sport, market: l.market, team: l.team, opp: l.opp, line: l.line, side: l.side, odds: l.odds, price: l.price, pre: l.p, start: l.start}
     : {sport: l.sport, pid: l.pid, name: l.name, team: l.team, grp: l.grp, key: l.key, label: l.label, desc: l.desc, line: l.line, side: l.side,
        mu: l.mu, sd: l.sd, count: l.count, disp: l.disp, pre: l.p, outsMu: l.outsMu, start: l.start, opp: l.opp, hist: []});
   if (!legs.length) return;
