@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Trade Scale best bets: the props most likely to hit on each sport's next slate, and the best 3-leg parlays.
+Trade Scale best bets: the props most likely to hit on each sport's next slate, and the best parlays (3 legs here; the page builds any size from the pool).
 
 Reads the trained model's chances that train_props_model.py wrote into each player's file ("ml") and picks, for every
 player on the slate, the side of his main props the model likes most, at a line close to where a book would set it
@@ -51,6 +51,7 @@ TOP_PICKS = 12
 TOP_OVERS = 6     # unders win most props, so the best overs get their own short list
 PARLAY_POOL = 24
 PARLAYS = 3
+LEG_POOL = 60     # the page builds parlays of any size from this many of the strongest picks
 NFL_TEAM = {"LAR": "LA", "JAC": "JAX", "WSH": "WAS"}   # Sleeper vs nflverse team codes
 
 
@@ -216,10 +217,12 @@ def build_sport(sport):
         out["parlays"].append({"p": round(p, 3), "legs": [c["pid"] + ":" + c["key"] for c in trio]})
         if len(out["parlays"]) == PARLAYS:
             break
-    # parlay legs that aren't in the top picks still need their details on the page
+    # the page lets you pick how many legs: it builds those parlays itself from the strongest picks,
+    # so ship a deeper pool (as ids) and the details of every pool pick that isn't already in the top picks
     shown = {c["pid"] + ":" + c["key"] for c in out["picks"]}
-    extra = [c for c in pool if c["pid"] + ":" + c["key"] not in shown and any(c["pid"] + ":" + c["key"] in pl["legs"] for pl in out["parlays"])]
-    out["extra"] = extra
+    deep = cands[:max(LEG_POOL, PARLAY_POOL)]
+    out["pool"] = [c["pid"] + ":" + c["key"] for c in deep[:LEG_POOL]]
+    out["extra"] = [c for c in deep if c["pid"] + ":" + c["key"] not in shown]
     if not cands:
         out["note"] = "No player on this slate has a main prop the model can price."
     elif len(out["parlays"]) == 0:

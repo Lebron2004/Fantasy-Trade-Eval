@@ -67,8 +67,11 @@ def prop_picks(sport, s):
     """Rows for one sport of best.json: its top picks, and the parlays built from them."""
     rows, by_leg = [], {}
     # "extra" holds parlay legs that aren't top picks: they're kept as kind "leg" to grade the parlays, and left out
-    # of the picks' record
-    for kind, cands in (("prop", s.get("picks") or []), ("leg", s.get("extra") or [])):
+    # of the picks' record. It also carries the deeper pool the page builds custom-size parlays from, so keep only
+    # the legs of the saved parlays
+    in_parlay = {l for pl in s.get("parlays") or [] for l in pl["legs"]}
+    extra = [c for c in s.get("extra") or [] if c["pid"] + ":" + c["key"] in in_parlay]
+    for kind, cands in (("prop", s.get("picks") or []), ("leg", extra)):
         for c in cands:
             leg = c["pid"] + ":" + c["key"]
             if leg in by_leg:
