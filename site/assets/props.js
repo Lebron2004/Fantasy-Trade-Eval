@@ -292,7 +292,7 @@ function renderPicker(){
   host.append(wrap);
 }
 
-/* ---------- Best bets: the trained model's strongest picks and 3-leg parlays for the next slate ---------- */
+/* ---------- Best bets: the trained model's strongest picks and parlays (any number of legs) for the next slate ---------- */
 // scripts/best_bets.py writes data/props/best.json every morning, after the model is trained
 let best = null;
 const loadBest = () => best || (best = getJSON("data/props/best.json").catch(() => { best = null; return null; }));
@@ -300,6 +300,37 @@ const loadBest = () => best || (best = getJSON("data/props/best.json").catch(() 
 const tier = (p, legs = 1) => { const q = Math.pow(p, 1 / legs); return q >= 0.64 ? "hi" : q >= 0.56 ? "mid" : "lo"; };
 const chancePill = (p, legs = 1) => el("span", {class:`chance ${tier(p, legs)}`, text:pct(p)});
 let bestDate = null;
+// how many legs the parlays have: 3 to start, any number the slate's games allow, remembered across visits
+const MAX_LEGS = 20;
+let parlayLegs = Math.min(MAX_LEGS, Math.max(2, Math.round(+store.get("tradescale:parlay-legs") || 3)));
+function legPicker(max, redraw){
+  const shown = Math.min(parlayLegs, Math.max(2, max));
+  const set = n => { n = Math.min(Math.max(2, max), MAX_LEGS, Math.max(2, Math.round(n) || 2)); input.value = String(n); if (n === parlayLegs) return; parlayLegs = n; store.set("tradescale:parlay-legs", n); redraw(); };
+  const input = el("input", {type:"number", min:"2", max:String(Math.max(2, Math.min(max, MAX_LEGS))), value:String(shown), inputmode:"numeric", "aria-label":"Legs per parlay"});
+  input.onchange = () => set(+input.value);
+  return el("div", {class:"legs-pick"}, el("span", {text:"Legs"}),
+    el("button", {class:"btn tiny", text:"\u2212", "aria-label":"One fewer leg", disabled: shown <= 2 ? "" : false, onclick: () => set(shown - 1)}),
+    input,
+    el("button", {class:"btn tiny", text:"+", "aria-label":"One more leg", disabled: shown >= Math.min(max, MAX_LEGS) ? "" : false, onclick: () => set(shown + 1)}));
+}
+// the likeliest parlays of k legs, one leg per game: each game's likeliest pick, best games first.
+// Later parlays share no player with earlier ones. cands carry .p; gameOf and whoOf give a pick's game and person.
+function buildParlays(cands, k, n, gameOf, whoOf = () => null){
+  const out = [], used = new Set();
+  for (let i = 0; i < n; i++){
+    const byGame = new Map();
+    for (const c of cands){
+      const who = whoOf(c); if (who != null && used.has(who)) continue;
+      const g = gameOf(c), cur = byGame.get(g); if (!cur || c.p > cur.p) byGame.set(g, c);
+    }
+    const legs = [...byGame.values()].sort((a, b) => b.p - a.p).slice(0, k);
+    if (legs.length < k) break;
+    legs.forEach(c => { const who = whoOf(c); if (who != null) used.add(who); });
+    out.push({p: legs.reduce((x, c) => x * c.p, 1), legs});
+  }
+  return out;
+}
+const gamesIn = (cands, gameOf) => new Set(cands.map(gameOf)).size;
 const slateName = b => !/^\d{4}-/.test(b.slate || "") ? (b.slate || "the next slate") : b.slate === bestDate ? "today"
   : new Date(b.slate + "T12:00:00").toLocaleDateString(undefined, {weekday:"long", month:"short", day:"numeric"});
 function pickText(c, sp = sport){ return withSport(sp, () => sideText(c.key, c.line, c.side)); }
@@ -341,11 +372,19 @@ function bestPanel(b, sp){
     : "Rebuilt every morning with the latest results and injury tags; injured players are left out.";
   box.append(el("p", {class:"sub", text:`The trained model's most likely props across ${b.games} ${unit}${b.games === 1 ? "" : "s"}, each at the line nearest his average over ${basis}, since real sportsbook lines aren't in the free data. Your book's line may differ, so tap a pick to check it at that line. ${fresh}`}));
   const byId = new Map([...b.picks, ...(b.extra || [])].map(c => [c.pid + ":" + c.key, c]));
-  if (b.parlays.length){
-    box.append(el("h3", {text:"3-leg parlays"}));
+  const redraw = () => box.replaceWith(bestPanel(b, sp));
+  // build the parlays here at the chosen size, from the deeper pool when this morning's data has one
+  const pool = (b.pool || [...b.picks.map(c => c.pid + ":" + c.key), ...(b.extra || []).map(c => c.pid + ":" + c.key)]).map(k => byId.get(k)).filter(Boolean);
+  const gameOf = c => [c.team, c.opp].sort().join("-") + c.date;
+  const maxLegs = gamesIn(pool, gameOf);
+  const parlays = buildParlays(pool, Math.min(parlayLegs, maxLegs), 3, gameOf, c => c.pid);
+  if (maxLegs >= 2 && parlays.length){
+    const k = parlays[0].legs.length;
+    box.append(el("div", {class:"bar-row pick-head"}, el("h3", {text:`${k}-leg parlays`}), legPicker(maxLegs, redraw)));
+    if (parlayLegs > maxLegs) box.append(el("p", {class:"sub", text:`This slate has ${maxLegs} ${unit}s with a pick, so ${maxLegs} legs is the most at one leg per ${unit}.`}));
     const grid = el("div", {class:"parlays"});
-    b.parlays.forEach((pl, i) => {
-      const legs = pl.legs.map(k => byId.get(k)).filter(Boolean);
+    parlays.forEach((pl, i) => {
+      const legs = pl.legs;
       const card = el("div", {class:`parlay ${tier(pl.p, legs.length)}`},
         el("div", {class:"parlay-top"}, el("strong", {text: i === 0 ? "Best parlay" : `Parlay ${i + 1}`}), chancePill(pl.p, legs.length)),
         el("ul", {}, ...legs.map(c => el("li", {},
@@ -356,7 +395,7 @@ function bestPanel(b, sp){
       grid.append(card);
     });
     box.append(grid);
-  } else if (b.note) box.append(el("p", {class:"sub", text:b.note}));
+  } else box.append(el("p", {class:"sub", text: maxLegs < 2 ? `Not enough ${unit}s on this slate for a parlay with one leg per ${unit}.` : b.note || "No parlays for this slate."}));
   const pickList = list => {
     const ul = el("ol", {class:"picks"});
     list.forEach(c => {
@@ -369,7 +408,6 @@ function bestPanel(b, sp){
     });
     return ul;
   };
-  const redraw = () => box.replaceWith(bestPanel(b, sp));
   if (pickView === "game"){
     const seen = new Set(), all = [...b.picks, ...(b.overs || [])].filter(c => !seen.has(c.pid + ":" + c.key) && seen.add(c.pid + ":" + c.key));
     const head = c => sp === "ufc" ? `${c.name} vs ${c.opp}` : c.home === 0 ? `${c.team} at ${c.opp}` : c.home ? `${c.opp} at ${c.team}` : `${c.team} vs ${c.opp}`;
@@ -545,14 +583,23 @@ function renderGames(d, sp){
   const top = (pred, n) => all.filter(b => b.p > 0.5 && pred(b)).sort((a, b) => b.p - a.p).slice(0, n);   // the side the model favors
   const spreads = top(b => b.market === "spread" && b.book, 8), totals = top(b => b.market === "total" && b.book, 6);
   const mls = top(b => b.market === "ml", 8);
-  // a 3-leg parlay, one leg per game: the likeliest spread and total picks against real lines, else moneylines
-  const pool = [...spreads, ...totals].sort((a, b) => b.p - a.p), legs = [], seen = new Set();
-  for (const b of pool.length >= 3 ? pool : mls){ if (!seen.has(b.g.id)){ seen.add(b.g.id); legs.push(b); } if (legs.length === 3) break; }
+  // a parlay of the chosen size, one leg per game: the likeliest spread or total against a real line in each game,
+  // then the likeliest winners from games without one once those run out
+  const redraw = () => renderGames(d, sp);
+  const lean = all.filter(b => b.p > 0.5 && (b.market === "spread" || b.market === "total") && b.book);
+  const withLine = new Set(lean.map(b => b.g.id));
+  const legPool = [...lean, ...all.filter(b => b.p > 0.5 && b.market === "ml" && !withLine.has(b.g.id))];
+  const maxLegs = Math.min(gamesIn(legPool, b => b.g.id), MAX_LEGS), k = Math.min(parlayLegs, maxLegs);
+  const byLine = buildParlays(lean, k, 1, b => b.g.id)[0];
+  const top1 = byLine || buildParlays(legPool, k, 1, b => b.g.id)[0];
+  const legs = top1 ? top1.legs : [];
   const box = el("section", {class:"panel best"});
-  if (legs.length === 3){
-    const p = legs.reduce((x, b) => x * b.p, 1);
-    box.append(el("h3", {text:"Best 3-leg parlay"}), el("div", {class:"parlays"}, el("div", {class:`parlay ${tier(p, 3)}`},
-      el("div", {class:"parlay-top"}, el("strong", {text:"Best parlay"}), chancePill(p, 3)),
+  if (legs.length >= 2){
+    const p = top1.p;
+    box.append(el("div", {class:"bar-row pick-head"}, el("h3", {text:`Best ${k}-leg parlay`}), legPicker(maxLegs, redraw)),
+      parlayLegs > maxLegs ? el("p", {class:"sub", text:`There are ${maxLegs} games with a pick right now, so ${maxLegs} legs is the most at one leg per game.`}) : null,
+      el("div", {class:"parlays"}, el("div", {class:`parlay ${tier(p, k)}`},
+      el("div", {class:"parlay-top"}, el("strong", {text:"Best parlay"}), chancePill(p, k)),
       el("ul", {}, ...legs.map(b => el("li", {}, el("button", {class:"linkish", text:betText(d, b), onclick: () => openGame(d, sp, b.g)}),
         el("small", {text:` ${matchup(d, b.g)}, ${pct(b.p)}`})))),
       el("div", {class:"parlay-foot"}, el("small", {text:`Fair odds ${toAmerican(p)}. One leg per game.`}),
@@ -564,7 +611,6 @@ function renderGames(d, sp){
     el("button", {class:"btn tiny", text:"+ Slip", "aria-label":`Add ${betText(d, b)} to the slip`, onclick: () => addBets(d, sp, [b])}))));
   const why = {spread: b => `Model line ${modelLineText(d, b.g)}, book ${bookLineText(d, b.g)}.`, total: b => `Model total ${fmt1(b.g.t)}, book ${b.line}.`,
     ml: b => b.odds != null ? `Book ${signed(b.odds)} (${pct(implied(b.odds))} with the cut).` : `Model line ${modelLineText(d, b.g)}.`};
-  const redraw = () => renderGames(d, sp);
   if (pickView === "game"){
     box.append(pickHead("Picks by game", redraw),
       el("p", {class:"sub", text:"The best spreads, totals and winners, one card a game, the game with the likeliest pick first. Heavy favorites pay little, so compare a winner's chance with the book's price."}),

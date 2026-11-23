@@ -587,6 +587,9 @@ input.num.rec{width:3.4rem;padding:3px 6px;margin:0 2px}
 @media (max-width:560px){.an-games{grid-template-columns:1fr}}
 .pick-head{justify-content:space-between;flex-wrap:wrap;gap:8px;margin:18px 0 6px}
 .pick-head h3{margin:0}
+.legs-pick{display:inline-flex;align-items:center;gap:6px;font-size:.92rem;color:var(--muted)}
+.legs-pick input{width:3.4em;text-align:center;padding:4px 2px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit}
+.legs-pick button[disabled]{opacity:.4;cursor:default}
 .pgames{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px}
 .pgame{border:1px solid var(--line);border-top:5px solid var(--line);border-radius:14px;padding:10px 12px;min-width:0}
 .pgame.hi{border-top-color:var(--hi)} .pgame.mid{border-top-color:var(--mid)} .pgame.lo{border-top-color:var(--lo)}
