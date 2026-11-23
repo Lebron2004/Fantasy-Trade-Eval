@@ -148,13 +148,6 @@ function byConfidence(list){
   }).filter(Boolean);
   return rows.length ? el("div", {class:"an-bars"}, ...rows) : null;
 }
-function recentList(list){
-  const done = list.filter(x => x.res).slice(-20).reverse();
-  if (!done.length) return null;
-  return el("ul", {class:"an-res"}, ...done.map(x => el("li", {class:`r-${x.res}`},
-    el("span", {class:"ic", text: x.res === "W" ? "✓" : x.res === "L" ? "✗" : x.res === "P" ? "=" : "–", "aria-label": {W:"won", L:"lost", P:"push", V:"void"}[x.res]}),
-    el("div", {}, el("strong", {text:pickText(x)}), el("small", {text:`${sport === "all" ? NAME[x.sport] + ", " : ""}${fmtDate(x.date)}. Model ${pct(x.p)}${actualText(x) ? `, ${actualText(x)}` : ""}.`})))));
-}
 function byType(list, sp){
   const groups = {};
   list.filter(x => x.res === "W" || x.res === "L").forEach(x => {
@@ -173,7 +166,7 @@ function trackRecord(sp){
   box.append(el("div", {class:"bar-row", style:"justify-content:space-between;margin-bottom:10px"},
     el("p", {class:"sub", style:"margin:0", text: sp === "all" ? "Every pick the Props page showed, across every sport." :
       COLLEGE.includes(sp) ? "The best spreads, totals and winners the college tab showed." : "The top picks the Props page showed for this sport."}),
-    seg(WINDOWS, win, w => { win = w; store.set("tradescale:analytics-window", w); render(); })));
+    seg(WINDOWS, win, w => { win = w; gameDays = 3; store.set("tradescale:analytics-window", w); render(); })));
   box.append(recordTiles(s, COLLEGE.includes(sp) ? null : parlaysFor(sp)));
   if (!all.length){
     box.append(el("p", {class:"empty", text:`Tracking started ${A.since ? fmtDate(A.since) : "with the latest update"}. Picks are saved each morning and graded the morning after their games, so results fill in here day by day.`}));
@@ -186,6 +179,93 @@ function trackRecord(sp){
   if (conf) box.append(el("h3", {text:"Did the sure ones hit more?"}),
     el("p", {class:"sub", text:"Picks grouped by the model's chance. The bar is how often they hit; the tick is what the model expected."}), conf);
   return box;
+}
+
+/* ---------- game by game ---------- */
+// one card a game: every pick made on it, how each one graded, and the game's record
+const gameKey = x => COLLEGE.includes(x.sport) ? x.id.split(":").slice(0, 2).join(":") : `${x.sport}|${x.date}|${[x.team, x.opp].sort().join("|")}`;
+function collegeNames(list){
+  // school names from the pick text, so a card can say "Wake Forest" instead of "WAKE"
+  const full = {};
+  list.forEach(x => {
+    if (x.kind === "ml") full[x.team] = x.name.replace(/ to win$/, "");
+    else if (x.kind === "spread") full[x.team] = x.name.replace(/ [+-]?\d+(\.\d+)?$/, "");
+    else if (x.kind === "total"){ const m = x.name.match(/: (.+) at (.+)$/); if (m){ full[x.team] = full[x.team] || m[1]; full[x.opp] = full[x.opp] || m[2]; } }
+  });
+  return full;
+}
+function gameInfo(g, full){
+  const x = g.picks[0];
+  if (!COLLEGE.includes(x.sport)){
+    const sep = x.sport === "ufc" ? " vs " : x.sport === "soc" || x.sport === "cri" ? " v " : " vs ";
+    return {title: x.team + sep + x.opp, score: null};
+  }
+  // college: the pick says which side is home (totals list the away team first)
+  const home = x.kind === "total" || x.side === "away" ? x.opp : x.team, away = home === x.team ? x.opp : x.team;
+  const nm = t => full[t] || t;
+  let score = null;
+  const side = g.picks.find(p => (p.kind === "ml" || p.kind === "spread") && p.actual != null), tot = g.picks.find(p => p.kind === "total" && p.actual != null);
+  if (side && tot){
+    const a = (tot.actual + side.actual) / 2, b = (tot.actual - side.actual) / 2;
+    if (Number.isInteger(a) && Number.isInteger(b)) score = `Final: ${nm(side.team)} ${a}, ${nm(side.opp)} ${b}`;
+  }
+  if (!score && side) score = side.actual > 0 ? `${nm(side.team)} won by ${side.actual}` : side.actual < 0 ? `${nm(side.opp)} won by ${-side.actual}` : "Tied";
+  if (!score && tot) score = `${tot.actual} points scored`;
+  return {title: `${nm(away)} at ${nm(home)}`, score};
+}
+function gamePickText(x){
+  if (x.kind === "total") return x.name.replace(/:.*$/, "");
+  return pickText(x);
+}
+function gameCard(g, full, showSport){
+  const s = summarize(g.picks), info = gameInfo(g, full);
+  const cls = s.pending && !s.n ? "g-open" : !s.n ? "" : s.w > s.l ? "g-W" : s.l > s.w ? "g-L" : "g-E";
+  const rec = s.n ? `${s.w}-${s.l}${s.push ? "-" + s.push : ""}` : s.pending ? "Open" : "Void";
+  const order = {W:0, L:1, P:2, V:3};
+  const picks = g.picks.slice().sort((a, b) => (order[a.res] ?? 4) - (order[b.res] ?? 4) || b.p - a.p);
+  return el("article", {class:`an-game ${cls}`},
+    el("header", {},
+      el("div", {}, el("strong", {text:info.title}),
+        el("small", {text:`${showSport ? NAME[g.sport] + ", " : ""}${g.picks.length} pick${g.picks.length > 1 ? "s" : ""}${s.n ? `, ${signed(s.units)}u` : ""}${s.pending && s.n ? `, ${s.pending} open` : ""}`})),
+      el("span", {class:"g-rec", text:rec, "aria-label": s.n ? `${s.w} won, ${s.l} lost` : rec})),
+    info.score ? el("p", {class:"g-score", text:info.score}) : null,
+    el("ul", {}, ...picks.map(x => el("li", {class:`r-${x.res || "O"}`},
+      el("span", {class:"ic", text: x.res === "W" ? "✓" : x.res === "L" ? "✗" : x.res === "P" ? "=" : x.res === "V" ? "–" : "◷",
+        "aria-label": {W:"won", L:"lost", P:"push", V:"void"}[x.res] || "open"}),
+      el("span", {class:"g-pick", text:gamePickText(x)}),
+      el("span", {class:"g-act", text: actualText(x) || `${pct(x.p)}`, title:`Model ${pct(x.p)}`})))));
+}
+let gameDays = 3;
+function gamesPanel(sp){
+  const list = picksFor(sp).filter(x => inWindow(x.date));
+  const full = collegeNames(list);
+  const games = {};
+  list.forEach(x => { const k = gameKey(x); (games[k] = games[k] || {sport:x.sport, date:x.date, picks:[]}).picks.push(x); });
+  const byDay = {};
+  Object.values(games).forEach(g => (byDay[g.date] = byDay[g.date] || []).push(g));
+  const days = Object.keys(byDay).sort().reverse();
+  const box = panel("Game by game", sp === "all" ? "Every game the site made picks on, newest first, with how each pick graded." :
+    "Every game the site made picks on, newest first. Each card is one game: its record, and how every pick on it graded.");
+  if (!days.length){ box.append(el("p", {class:"empty", style:"margin:0", text:"No games in this window yet."})); return box; }
+  const wrap = el("div", {});
+  const draw = () => {
+    wrap.innerHTML = "";
+    // upcoming days don't use up the room: show through the gameDays-th day that has results
+    let shown = 0, cut = days.length;
+    for (let i = 0; i < days.length; i++) if (byDay[days[i]].some(g => g.picks.some(x => x.res)) && ++shown === gameDays){ cut = i + 1; break; }
+    days.slice(0, cut).forEach(d => {
+      const gs = byDay[d].sort((a, b) => b.picks.length - a.picks.length || summarize(b.picks).w - summarize(a.picks).w);
+      const s = summarize(gs.flatMap(g => g.picks));
+      const date = new Date(d + "T12:00:00").toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric"});
+      wrap.append(el("h3", {class:"g-day"}, el("span", {text:date}),
+        el("small", {text:`${gs.length} game${gs.length > 1 ? "s" : ""}${s.n ? `, ${s.w}-${s.l}${s.push ? "-" + s.push : ""}, ${signed(s.units)}u` : s.pending ? ", not graded yet" : ""}`})),
+        el("div", {class:"an-games"}, ...gs.map(g => gameCard(g, full, sp === "all"))));
+    });
+    if (days.length > cut) wrap.append(el("button", {class:"btn g-more", text:`Show earlier days (${days.length - cut} more)`,
+      onclick: () => { gameDays += 7; draw(); }}));
+  };
+  draw();
+  return box.append(wrap), box;
 }
 
 /* ---------- all sports ---------- */
@@ -212,20 +292,8 @@ function overview(){
   }).filter(Boolean).sort((a, b) => b.rate - a.rate);
   if (sharp.length) app.append(panel("Where the models are sharpest", "On held-out games, how often each sport's model was right when it gave a side 60% or better.",
     el("div", {class:"an-bars"}, ...sharp.map(r => bullet(NAME[r.sp], r.rate, BREAK_EVEN, `${pct1(r.rate)} of ${r.n.toLocaleString()}`, "Tick: 52.4%, break-even at -110")))));
-  app.append(recentPanel("all"));
+  app.append(gamesPanel("all"));
 }
-function recentPanel(sp){
-  const list = picksFor(sp).filter(x => inWindow(x.date));
-  const r = recentList(list);
-  const open = list.filter(x => x.res == null).sort((a, b) => b.p - a.p).slice(0, 8);
-  const box = panel("Latest results", null);
-  box.append(r || el("p", {class:"empty", style:"margin:0", text:"Nothing graded in this window yet."}));
-  if (open.length) box.append(el("h3", {text:"Still open"}), el("ul", {class:"an-res"}, ...open.map(x => el("li", {},
-    el("span", {class:"ic", text:"◷"}), el("div", {}, el("strong", {text:pickText(x)}),
-      el("small", {text:`${sp === "all" ? NAME[x.sport] + ", " : ""}${fmtDate(x.date)}. Model ${pct(x.p)}.`}))))));
-  return box;
-}
-
 /* ---------- one sport ---------- */
 function modelCard(sp){
   const m = (A.models || {})[sp];
@@ -298,7 +366,7 @@ async function sportView(sp){
   const list = picksFor(sp).filter(x => inWindow(x.date));
   const t = byType(list, sp);
   if (t) app.append(panel(COLLEGE.includes(sp) ? "By bet type" : "By prop", "Which kinds of picks have paid off in this window.", t));
-  app.append(recentPanel(sp));
+  app.append(gamesPanel(sp));
   app.append(COLLEGE.includes(sp) ? collegeCard(sp) : modelCard(sp));
   if (FANTASY.includes(sp)){ const box = await marketCard(sp); if (sport === sp) app.append(box); }
 }
@@ -309,7 +377,7 @@ function renderSports(){
   SPORTS.forEach(([id, label]) => nav.append(el("button", {text:label, "data-sport":id, "aria-pressed": String(sport === id), onclick: () => go(id)})));
 }
 function go(sp){
-  sport = sp; store.set("tradescale:analytics-sport", sp);
+  sport = sp; gameDays = 3; store.set("tradescale:analytics-sport", sp);
   history.replaceState(null, "", sp === "all" ? location.pathname : `#sp=${sp}`);
   render(); window.scrollTo({top:0, behavior:"smooth"});
 }

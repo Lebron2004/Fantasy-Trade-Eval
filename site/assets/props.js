@@ -314,6 +314,22 @@ async function checkParlay(legs, sp){
   renderSlip(); $("slip").scrollIntoView({behavior:"smooth", block:"start"});
   await Promise.all(slip.legs.map(modelLeg)); renderSlip();
 }
+// the picks can be read one card a game (default, easier to scan) or as one ranked list
+let pickView = store.get("tradescale:props-pickview") === "pick" ? "pick" : "game";
+function viewToggle(redraw){
+  return el("div", {class:"seg", role:"group", "aria-label":"Show the picks"}, ...[["game","By game"],["pick","By pick"]].map(([id, label]) =>
+    el("button", {text:label, "aria-pressed": String(pickView === id), onclick: () => { pickView = id; store.set("tradescale:props-pickview", id); redraw(); }})));
+}
+const pickHead = (title, redraw) => el("div", {class:"bar-row pick-head"}, el("h3", {text:title}), viewToggle(redraw));
+// items: [{key, head, sub, p, row}] where row is the element for one pick; one card per game, the game with the likeliest pick first
+function gameCards(items){
+  const games = new Map();
+  items.forEach(it => { if (!games.has(it.key)) games.set(it.key, {head: it.head, sub: it.sub, items: []}); games.get(it.key).items.push(it); });
+  const list = [...games.values()].map(g => (g.items.sort((a, b) => b.p - a.p), g)).sort((a, b) => b.items[0].p - a.items[0].p);
+  return el("div", {class:"pgames"}, ...list.map(g => el("article", {class:`pgame ${tier(g.items[0].p)}`},
+    el("header", {}, el("strong", {text:g.head}), el("small", {text:`${g.sub}${g.sub ? ", " : ""}${g.items.length} pick${g.items.length > 1 ? "s" : ""}`})),
+    el("ul", {}, ...g.items.map(it => it.row)))));
+}
 function bestPanel(b, sp){
   const box = el("section", {class:"panel best"});
   box.append(el("h2", {text:`Best bets for ${slateName(b)}`}));
@@ -353,7 +369,18 @@ function bestPanel(b, sp){
     });
     return ul;
   };
-  box.append(el("h3", {text:"Most likely to hit"}), pickList(b.picks));
+  const redraw = () => box.replaceWith(bestPanel(b, sp));
+  if (pickView === "game"){
+    const seen = new Set(), all = [...b.picks, ...(b.overs || [])].filter(c => !seen.has(c.pid + ":" + c.key) && seen.add(c.pid + ":" + c.key));
+    const head = c => sp === "ufc" ? `${c.name} vs ${c.opp}` : c.home === 0 ? `${c.team} at ${c.opp}` : c.home ? `${c.opp} at ${c.team}` : `${c.team} vs ${c.opp}`;
+    box.append(pickHead("Picks by game", redraw),
+      el("p", {class:"sub", text:`Every top pick and best over, one card a ${unit}, the ${unit} with the likeliest pick first. Tap a name to check it at your book's line.`}),
+      gameCards(all.map(c => ({key: `${c.date}|${sp === "ufc" ? [c.name, c.opp].sort() : [c.team, c.opp].sort()}`, head: head(c), sub: shortDate(c.date), p: c.p,
+        row: el("li", {}, chancePill(c.p), el("div", {}, el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}),
+          el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:`Hit ${c.l10[0]} of his last ${c.l10[1]}.`})))}))));
+    return box;
+  }
+  box.append(pickHead("Most likely to hit", redraw), pickList(b.picks));
   if ((b.overs || []).length){
     box.append(el("h3", {text:"Best overs"}),
       el("p", {class:"sub", text:"Players finish under their usual line more often than over, so most top picks are unders. These are the overs the model likes most."}),
@@ -535,9 +562,20 @@ function renderGames(d, sp){
     el("div", {}, el("button", {class:"linkish", text:betText(d, b), onclick: () => openGame(d, sp, b.g)}),
       el("div", {class:"pick-line", text:matchup(d, b.g)}), el("small", {text:`${kickoff(b.g.start)}. ${why(b)}`})),
     el("button", {class:"btn tiny", text:"+ Slip", "aria-label":`Add ${betText(d, b)} to the slip`, onclick: () => addBets(d, sp, [b])}))));
-  if (spreads.length) box.append(el("h3", {text:"Best spread picks"}), pickList(spreads, b => `Model line ${modelLineText(d, b.g)}, book ${bookLineText(d, b.g)}.`));
-  if (totals.length) box.append(el("h3", {text:"Best totals"}), pickList(totals, b => `Model total ${fmt1(b.g.t)}, book ${b.line}.`));
-  box.append(el("h3", {text:"Likeliest winners"}),
+  const why = {spread: b => `Model line ${modelLineText(d, b.g)}, book ${bookLineText(d, b.g)}.`, total: b => `Model total ${fmt1(b.g.t)}, book ${b.line}.`,
+    ml: b => b.odds != null ? `Book ${signed(b.odds)} (${pct(implied(b.odds))} with the cut).` : `Model line ${modelLineText(d, b.g)}.`};
+  const redraw = () => renderGames(d, sp);
+  if (pickView === "game"){
+    box.append(pickHead("Picks by game", redraw),
+      el("p", {class:"sub", text:"The best spreads, totals and winners, one card a game, the game with the likeliest pick first. Heavy favorites pay little, so compare a winner's chance with the book's price."}),
+      gameCards([...spreads, ...totals, ...mls].map(b => ({key: b.g.id, head: matchup(d, b.g), sub: kickoff(b.g.start), p: b.p,
+        row: el("li", {}, chancePill(b.p), el("div", {}, el("button", {class:"linkish", text:betText(d, b), onclick: () => openGame(d, sp, b.g)}),
+          el("small", {text:why[b.market](b)})),
+          el("button", {class:"btn tiny", text:"+ Slip", "aria-label":`Add ${betText(d, b)} to the slip`, onclick: () => addBets(d, sp, [b])}))}))));
+  } else box.append(pickHead("Ranked picks", redraw));
+  if (pickView === "pick" && spreads.length) box.append(el("h3", {text:"Best spread picks"}), pickList(spreads, b => `Model line ${modelLineText(d, b.g)}, book ${bookLineText(d, b.g)}.`));
+  if (pickView === "pick" && totals.length) box.append(el("h3", {text:"Best totals"}), pickList(totals, b => `Model total ${fmt1(b.g.t)}, book ${b.line}.`));
+  if (pickView === "pick") box.append(el("h3", {text:"Likeliest winners"}),
     el("p", {class:"sub", text:"Moneyline favorites, safest first. Heavy favorites pay little, so compare the chance with the book's price."}),
     pickList(mls, b => b.odds != null ? `Book ${signed(b.odds)} (${pct(implied(b.odds))} with the cut).` : `Model line ${modelLineText(d, b.g)}.`));
   if (!spreads.length && !totals.length) box.append(el("p", {class:"sub", text:"No book lines posted for these games yet, so only winners are shown. Open a game to price any spread or total."}));
