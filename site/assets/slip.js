@@ -409,8 +409,10 @@ SF|Dons|San Francisco|`;
     const t = String(text).replace(/\u2212/g, "-").replace(/½/g, ".5");
     const found = [];
     let m;
-    if ((m = /\b(over|o)\s*(\d+(?:\.\d+)?)/i.exec(t))) found.push({at: m.index, side:"over", line:Number(m[2])});
-    if ((m = /\b(under|u)\s*(\d+(?:\.\d+)?)/i.exec(t))) found.push({at: m.index, side:"under", line:Number(m[2])});
+    // pick'em apps say higher/lower or more/less instead of over/under
+    if ((m = /\b(over|o|higher|more)\s*(\d+(?:\.\d+)?)/i.exec(t))) found.push({at: m.index, side:"over", line:Number(m[2])});
+    if ((m = /\b(under|u|lower|less)\s*(\d+(?:\.\d+)?)/i.exec(t))) found.push({at: m.index, side:"under", line:Number(m[2])});
+    if ((m = /(?:^|\s)(\d+)\s+or\s+more\b/i.exec(t))) found.push({at: m.index, side:"over", line: Number(m[1]) - 0.5});
     if ((m = /(?:^|\s)(\d+(?:\.5)?)\s*\+(?!\d)/.exec(t))) found.push({at: m.index, side:"over", line: m[1].includes(".") ? Number(m[1]) : Number(m[1]) - 0.5});
     if (found.length){ found.sort((a, b) => a.at - b.at); return {side: found[0].side, line: found[0].line}; }
     if (YES.test(norm(t))) return {side:"over", line:0.5};
@@ -500,21 +502,37 @@ SF|Dons|San Francisco|`;
 
   const SPREAD = /(?:^|\s)([+\-]\d{1,2}(?:\.\d)?)(?=$|[\s)])/;
   const TOTAL = /(?:^|[^a-z])(over|under|o|u)\s*(\d{1,3}(?:\.\d)?)(?![\d:])/i;
-  const ML_WORD = /\b(money ?line|ml|h2h)\b/i, SPREAD_WORD = /\b(spread|puck ?line|run ?line|handicap)\b/i, PK = /\b(pk|pick ?em|pick)\b/i;
+  const ML_WORD = /\b(money ?line|ml|h2h|(?:game|match|fight) winner|winner)\b/i, SPREAD_WORD = /\b(spread|puck ?line|run ?line|handicap)\b/i, PK = /\b(pk|pick ?em|pick)\b/i;
   const TOTAL_WORD = /\btotal\b/i, TEAM_TOTAL = /\bteam total\b/i;
-  const PAYLINE = /\b(wager|payout|to pay|to win|net return|returns?|stake|bonus bets?|free bet|odds boost|cash ?out|risk)\b/i;
-  // a game line on a team: odds, a spread, a total, or the word moneyline
-  const teamSignal = line => ODDS.test(line) || SPREAD.test(line) || ML_WORD.test(line) || TOTAL.test(line);
+  const PAYLINE_RE = /\b(entry(?: fee)?|wager|payout|to pay|to win|net return|returns?|stake|bonus bets?|free bet|odds boost|cash ?out|risk)\b/i;
+  // prediction-market slips ("MEM Grizzlies to win  57%"): a pick to win, priced as a chance instead of odds.
+  // "To Win $25" is still the payout, so a "to win" with money after it isn't a pick.
+  const WIN_PICK = /\b(to win|wins?)\b(?!\s*:?\s*(?:\$|\d[\d,]*\.\d\d\b))/i;
+  const PCT = /(?:^|[\s(])(\d{1,2}(?:\.\d)?)\s?[%¢c](?=$|[\s)xX×✕])/;
+  const pctOf = s => { const m = PCT.exec(s); const p = m ? Number(m[1]) / 100 : null; return p > 0.005 && p < 0.995 ? p : null; };
+  const oddsOfP = p => p >= 0.5 ? -Math.round(100 * p / (1 - p)) : Math.round(100 * (1 - p) / p);
+  const PAYLINE = {test: line => PAYLINE_RE.test(String(line).replace(new RegExp(WIN_PICK.source, "gi"), " "))};
+  // a game line on a team: odds, a spread, a total, the word moneyline, or "to win" with a chance
+  const teamSignal = line => ODDS.test(line) || SPREAD.test(line) || ML_WORD.test(line) || TOTAL.test(line) || WIN_PICK.test(line) || PCT.test(line);
+  // a matchup line over its picks: "MEM Grizzlies vs CHA Hornets"
+  const VS = /\s(vs\.?|v\.?|@|at)\s/i;
 
   function buildTeamLeg(lines, rows, i, stop, active){
+    // a matchup header just above the pick (prediction-market layout) names the game; the next header starts another game
+    let hdr = null;
+    // (other picks on the same game can sit between: "Lakers to win", then "Over 220.5")
+    for (let j = i - 1; j >= Math.max(0, i - 4); j--) if (rows[j].header){ hdr = j; break; }
+    if (hdr != null) for (let j = i + 1; j < stop; j++) if (rows[j].header || rows[j].kind){ stop = j; break; }
     const ctx = lines.slice(i, stop).join(" ");
     // the pick's own text: its line, plus the next one when the market sits under the team name
     const line = !teamSignal(lines[i]) && lines[i + 1] && i + 1 < stop ? lines[i] + " " + lines[i + 1] : lines[i];
     let groups = rows[i].teams.slice();
     // teams on the lines under the pick (the matchup) tell us the opponent and settle the sport
     const others = [];
-    for (let j = i + 1; j < stop; j++) rows[j].teams.forEach(g => others.push(g));
+    if (hdr != null) rows[hdr].teams.forEach(g => others.push(g));
+    else for (let j = i + 1; j < stop; j++) rows[j].teams.forEach(g => others.push(g));
     const om = line.match(ODDS) || ctx.match(ODDS);
+    const price = om ? null : pctOf(line) ?? pctOf(ctx);
     const tot = TOTAL.exec(line) || (TOTAL_WORD.test(ctx) ? TOTAL.exec(ctx) : null);
     let market = "ml", ln = null, side = null;
     if (tot){ market = TEAM_TOTAL.test(ctx) ? "teamtotal" : "total"; side = /^u/i.test(tot[1]) ? "under" : "over"; ln = Number(tot[2]); }
@@ -536,15 +554,16 @@ SF|Dons|San Francisco|`;
     // a college name is both a football and a basketball team: keep the one that's playing soon
     const on = active ? cands.filter(c => active(c) !== false) : cands;
     if (on.length) cands = on;
-    return {kind: "team", cands, rest, market, line: ln, side, odds: om ? american(om[1]) : null,
-            text: line.slice(0, 120), ctx: ctx.slice(0, 160), sure: pickG.score >= 2 && cands.length === 1 && (market !== "ml" || !!om || ML_WORD.test(ctx))};
+    return {kind: "team", cands, rest, market, line: ln, side, odds: om ? american(om[1]) : price != null ? oddsOfP(price) : null, price,
+            text: line.slice(0, 120), ctx: ctx.slice(0, 160), stop,
+            sure: pickG.score >= 2 && cands.length === 1 && (market !== "ml" || !!om || ML_WORD.test(ctx) || WIN_PICK.test(line) || price != null)};
   }
   function finishTeamLeg(leg, votes){
     let c = leg.cands[0];
     if (leg.cands.length > 1) c = [...leg.cands].sort((a, b) => (votes[b.sport] || 0) - (votes[a.sport] || 0))[0];
     const opp = leg.rest.map(g => g.cands.find(x => x.sport === c.sport && x !== c)).find(Boolean);
     const out = {kind: "team", sport: c.sport, market: leg.market, team: teamOut(c), opp: opp ? teamOut(opp) : null,
-      line: leg.line, side: leg.side, odds: leg.odds, text: leg.text, sure: leg.sure,
+      line: leg.line, side: leg.side, odds: leg.odds, text: leg.text, sure: leg.sure, ...(leg.price != null ? {price: leg.price} : {}),
       alts: leg.cands.filter(x => x !== c).map(x => ({sport: x.sport, team: teamOut(x)}))};
     return out;
   }
@@ -552,13 +571,14 @@ SF|Dons|San Francisco|`;
   /* ---------- wager, payout and bonus bets ---------- */
   const LABELS = [["profit", /\b(net return|to win|net payout|profit|potential win(?:nings)?|winnings)\b/i],
                   ["total", /\b(to pay|total payout|potential payout|payout|returns?)\b/i],
-                  ["stake", /\b(wager|stake|risk|bet amount|total wager|bonus bets?|free bet)\b/i]];
+                  ["stake", /\b(wager|stake|risk|bet amount|total wager|bonus bets?|free bet|entry(?: fee)?)\b/i]];
   function fromPayout(lines, legOdds){
     const found = {};
-    const money = s => { let m = [...s.matchAll(/\$\s?(\d[\d,]*(?:\.\d{1,2})?)/g)]; if (!m.length) m = [...s.matchAll(/(?:^|\s)(\d[\d,]*\.\d{2})(?=\s|$)/g)]; return m.map(x => Number(x[1].replace(/,/g, ""))); };
+    const money = s => { let m = [...s.matchAll(/[$£€]\s?(\d[\d,]*(?:\.\d{1,2})?)/g)]; if (!m.length) m = [...s.matchAll(/(?:^|\s)(\d[\d,]*\.\d{2})(?=\s|$)/g)]; return m.map(x => Number(x[1].replace(/,/g, ""))); };
     lines.forEach((line, i) => {
       const labs = [];
       let rest = line;
+      if (!PAYLINE.test(line)) return;   // "Thunder to win 63%" is a pick, not the payout
       for (const [k, re] of LABELS){ const m = re.exec(rest); if (m){ labs.push({k, at: m.index}); rest = rest.slice(0, m.index) + " ".repeat(m[0].length) + rest.slice(m.index + m[0].length); } }
       if (!labs.length) return;
       labs.sort((a, b) => a.at - b.at);
@@ -583,7 +603,10 @@ SF|Dons|San Francisco|`;
   // opts.active(team): false when the data says that team has no game soon (used to tell college football from basketball)
   function parse(text, idx, opts = {}){
     const raw = String(text || "").replace(/\r/g, "").replace(/[−–]/g, "-").replace(/½/g, ".5");
-    const lines = raw.split(/\n|(?<=[a-z0-9)])\s*[|•·]\s*/i).map(s => s.trim()).filter(Boolean);
+    const lines = raw.split(/\n|(?<=[a-z0-9)])\s*[|•·]\s*/i).map(s => s.trim()).filter(Boolean)
+      // European books show decimal odds ("@ 1.85"): read them as American, except on wager/payout lines where 10.00 is money
+      .map(line => PAYLINE.test(line) || /\$|€|£/.test(line) ? line : line.replace(/(^|[\s(@])(\d{1,2}\.\d{2})(?=$|[\s)])/g, (all, pre, d) => {
+        const n = Number(d); return n > 1.01 && n <= 50 ? `${pre}${n >= 2 ? "+" : ""}${fromDec(n)}` : all; }));
     const rows = lines.map(line => {
       let teams = PAYLINE.test(line) ? [] : findTeams(line);
       // a full player name wins over a school or city inside it ("Troy Franklin" isn't Troy)
@@ -595,10 +618,10 @@ SF|Dons|San Francisco|`;
       const pl = whole && whole.exact ? whole : findPlayers(teams.length ? maskTeams(line, teams) : line, idx);
       let kind = null;
       if (pl && pl.exact) kind = "player";
-      else if (teams.length && !PAYLINE.test(line) && teamSignal(line) && (teams.some(g => g.score >= 2) || ML_WORD.test(line) || SPREAD.test(line) || TOTAL.test(line))) kind = "team";
+      else if (teams.length && !PAYLINE.test(line) && teamSignal(line) && (teams.some(g => g.score >= 2) || ML_WORD.test(line) || SPREAD.test(line) || TOTAL.test(line) || WIN_PICK.test(line))) kind = "team";
       else if (/^\W{0,3}(over|under|o|u)\s*\d/i.test(line) && !pl) kind = "total";
       else if (pl && !teams.length) kind = "player";
-      return {line, teams, pl, kind};
+      return {line, teams, pl, kind, header: !kind && teams.length >= 2 && VS.test(" " + line + " ")};
     });
     // FanDuel-style: the team on one line, the market and odds on the next
     const TIME = /\b\d{1,2}:\d{2}\b|\b(mon|tue|wed|thu|fri|sat|sun|today|tomorrow)\b/i;
@@ -636,7 +659,7 @@ SF|Dons|San Francisco|`;
       }
       const t = buildTeamLeg(lines, rows, i, stop, opts.active);
       if (!t) return;
-      for (let j = i; j < stop; j++) used.add(j);
+      for (let j = i; j < t.stop; j++) used.add(j);
       pending.push(legs.length); legs.push(t);
     });
     // settle sports for names more than one league uses ("Jets", "Kings") by what the rest of the slip is
