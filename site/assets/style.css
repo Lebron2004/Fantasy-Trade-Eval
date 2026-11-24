@@ -600,3 +600,16 @@ input.num.rec{width:3.4rem;padding:3px 6px;margin:0 2px}
 .pgame li small{display:block;color:var(--muted);font-size:.82rem}
 .pgame li .chance{font-size:1.05rem;min-width:2.9rem;padding:4px 6px}
 @media (max-width:560px){.pgames{grid-template-columns:1fr}}
+
+/* best sportsbook app for a pick or parlay, with every other app that lists it */
+.books{display:flex;flex-direction:column;gap:3px;margin-top:6px;padding:6px 8px;border:1px dashed var(--line);border-radius:10px;font-size:.86rem}
+.books-best{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
+.books-best small,.books-rest{color:var(--muted)}
+.books-rest{display:block;font-size:.8rem}
+.book-tag{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--brand);border:1px solid currentColor;border-radius:6px;padding:0 5px}
+.books .btn.tiny{text-decoration:none}
+.btn.ghost{background:none}
+.apps{margin:4px 0 10px;font-size:.9rem}
+.apps summary{cursor:pointer;color:var(--muted);font-weight:600}
+.apps-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 12px;margin:6px 0}
+.apps-grid label{display:flex;align-items:center;gap:6px}
