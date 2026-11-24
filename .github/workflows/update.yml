@@ -20,9 +20,9 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+    # Kept on the github-pages environment so any secrets stored there
+    # (ESPN, Yahoo) still reach the league sync step.
+    environment: github-pages
     steps:
       - uses: actions/checkout@v5
 
@@ -111,5 +111,25 @@ jobs:
         with:
           path: site
 
+  # Deploying from its own job (instead of right after the upload in the same
+  # job) gives GitHub time to register the "github-pages" artifact. Deploying
+  # ~1 second after the upload kept failing with "No artifacts named
+  # github-pages were found" even though the upload had succeeded.
+  deploy:
+    needs: update
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url || steps.deploy_retry.outputs.page_url }}
+    steps:
       - id: deploy
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Wait before retrying the deploy
+        if: steps.deploy.outcome == 'failure'
+        run: sleep 60
+
+      - id: deploy_retry
+        if: steps.deploy.outcome == 'failure'
         uses: actions/deploy-pages@v4
