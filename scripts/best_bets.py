@@ -7,7 +7,9 @@ player on the slate, the side of his main props the model likes most, at a line 
 (see book_line). Then it builds 3-leg parlays from the strongest picks, one leg per game, so the legs
 are close to independent and the parlay's chance is the product of the three.
 
-Writes site/data/props/best.json. Sports whose model didn't ship today (it didn't beat the formula, or there are
+Writes site/data/props/best.json. Also writes site/data/props/<sport>/sgp.json: every prop the model can price for every
+team's next game (not just the next slate), so the page can build the likeliest same-game parlay for any team you search.
+Sports whose model didn't ship today (it didn't beat the formula, or there are
 no upcoming games) are listed with a note and no picks.
 
 Run after train_props_model.py. Standard library only.
@@ -111,6 +113,7 @@ def build_sport(sport):
     except Exception:
         model = {}
     label, teams = slate(index)
+    upcoming = {t: g for t, g in (index.get("next") or {}).items() if g.get("date") and g["date"] >= TODAY.isoformat()}
     out = {"slate": label, "games": len({tuple(sorted((t, g["opp"]))) for t, g in teams.items()}), "picks": [], "parlays": []}
     if not teams:
         out["note"] = "No games on the schedule yet."
@@ -119,7 +122,7 @@ def build_sport(sport):
         out["note"] = "The trained model didn't ship for this sport today, so there are no picks."
         return out
     hurt = injured(sport)
-    starters = {g.get("opp_sp") for g in teams.values() if g.get("opp_sp")}   # MLB probable pitchers
+    starters = {g.get("opp_sp") for g in upcoming.values() if g.get("opp_sp")}   # MLB probable pitchers
     markets, skip = MARKETS[sport], SKIP_GROUPS.get(sport, set())
     docs = []
     latest = ""
@@ -128,7 +131,7 @@ def build_sport(sport):
         log = [g for g in doc.get("log", []) if g.get("x") and g.get("d")]
         if log:
             latest = max(latest, log[-1]["d"])
-        if doc.get("ml") and doc.get("team") in teams and log:
+        if doc.get("ml") and doc.get("team") in upcoming and log:
             docs.append((doc, log))
     season_on = latest and (TODAY - date.fromisoformat(latest)).days <= 30
     # each team's latest match dates, from its players' logs (a cricketer's log mixes his franchise and his country)
@@ -139,7 +142,7 @@ def build_sport(sport):
                 team_dates.setdefault(g["tm"], set()).add(g["d"])
     cutoff = (date.fromisoformat(latest) - timedelta(days=STALE_DAYS[sport])).isoformat() if season_on else ""
 
-    cands, overs = [], []
+    cands, overs, every = [], [], []
     for doc, log in docs:
         grp = doc.get("grp") or doc.get("pos")
         if grp in skip:
@@ -155,7 +158,7 @@ def build_sport(sport):
                 continue
         if sport == "mlb" and grp == "SP" and doc["name"] not in starters:
             continue
-        ng = teams[doc["team"]]
+        ng = upcoming[doc["team"]]
         mine = []
         for key, entry in doc["ml"].items():
             if key not in markets or not entry.get("l"):
@@ -178,7 +181,8 @@ def build_sport(sport):
             mine.append({"pid": doc["id"], "name": doc["name"], "team": doc["team"], "grp": grp, "opp": ng["opp"],
                          "home": ng.get("home"), "date": ng["date"], "time": ng.get("time"), "key": key, "line": line,
                          "side": side, "p": round(p, 3), "l10": [hits, len(last10)], "why": why})
-        if mine:
+        every.extend(mine)          # every prop he has, for the same-game parlays
+        if mine and doc["team"] in teams:
             cands.append(max(mine, key=lambda c: c["p"]))     # his single most likely prop
             ov = [c for c in mine if c["side"] == "over"]
             if ov:
@@ -223,11 +227,39 @@ def build_sport(sport):
     deep = cands[:max(LEG_POOL, PARLAY_POOL)]
     out["pool"] = [c["pid"] + ":" + c["key"] for c in deep[:LEG_POOL]]
     out["extra"] = [c for c in deep if c["pid"] + ":" + c["key"] not in shown]
+    write_sgp(sport, upcoming, every)
     if not cands:
         out["note"] = "No player on this slate has a main prop the model can price."
     elif len(out["parlays"]) == 0:
         out["note"] = "Not enough games on this slate for a 3-leg parlay with one leg per game."
     return out
+
+
+def write_sgp(sport, upcoming, every):
+    """Every priced prop for each team's next game, grouped by game, for the page's team search and same-game parlays."""
+    games, teams = {}, {}
+    for t, g in upcoming.items():
+        key = "-".join(sorted((t, g["opp"] or ""))) + g["date"]
+        teams[t] = key
+        if key not in games:
+            home = t if g.get("home") == 1 else g["opp"] if g.get("home") == 0 else None
+            games[key] = {"teams": sorted((t, g["opp"] or "")), "home": home, "date": g["date"], "time": g.get("time"),
+                          "week": g.get("week"), "event": g.get("event"), "legs": []}
+    seen = set()
+    for c in sorted(every, key=lambda c: -c["p"]):
+        key = teams.get(c["team"])
+        if not key:
+            continue
+        # fight-level props show on both fighters' pages: keep one per bout
+        k = (key, c["key"]) if sport == "ufc" and c["key"] in FIGHT_LEVEL else (c["pid"], c["key"])
+        if k in seen:
+            continue
+        seen.add(k)
+        games[key]["legs"].append({f: c[f] for f in ("pid", "name", "team", "grp", "key", "line", "side", "p", "l10", "opp", "home", "date")})
+    out = {"updated": datetime.now(timezone.utc).isoformat(timespec="minutes"), "teams": teams, "games": games}
+    with open(os.path.join(PROPS, sport, "sgp.json"), "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
+    print(f"same-game {sport}: {len(games)} games, {sum(len(g['legs']) for g in games.values())} legs")
 
 
 def main():

@@ -266,30 +266,189 @@ function project(key){
 function renderPicker(){
   const host = $("picker"); host.innerHTML = "";
   if (!index) return;
+  host.append(searchBox(sport === "ufc" ? "Search any UFC fighter or fight" : C().search,
+    q => [...teamHits(q), ...index.players.filter(p => norm(p[1]).includes(q) || (q.length <= 3 && norm(p[2]) === q)).slice(0, 8)
+      .map(p => ({label: p[1], meta: sport === "ufc" ? p[3] : `${p[3]}, ${p[2]}`, pick: () => openPlayer(p[0])}))].slice(0, 9),
+    "Search players and teams"));
+}
+// a search box whose list fills in as you type; hits(q) gives [{label, meta, pick, team}] for a normalized query
+function searchBox(placeholder, hits, aria, opts = {}){
   const wrap = el("div", {class:"search", style:"max-width:520px"});
-  const input = el("input", {type:"text", placeholder:C().search, autocomplete:"off", role:"combobox", "aria-label":"Search players", "aria-expanded":"false"});
+  const input = el("input", {type:"text", placeholder, autocomplete:"off", role:"combobox", "aria-label":aria, "aria-expanded":"false", value: opts.value || ""});
   const ul = el("ul", {class:"results", role:"listbox", id:"prop-res"}); ul.hidden = true; input.setAttribute("aria-controls", "prop-res");
   wrap.append(input, ul);
-  let opts = [], active = 0;
+  let opts_ = [], active = 0;
   const close = () => { ul.hidden = true; input.setAttribute("aria-expanded","false"); };
+  const choose = o => { input.value = opts.keep ? input.value : ""; close(); o.pick(); };
   const show = () => {
     const q = norm(input.value.trim()); if (!q){ close(); return; }
-    opts = index.players.filter(p => norm(p[1]).includes(q) || (q.length <= 3 && norm(p[2]) === q)).slice(0, 8);
+    opts_ = hits(q);
     ul.innerHTML = "";
-    opts.forEach((p, i) => { const li = el("li", {role:"option", id:`pr-${i}`}, el("span", {text:p[1]}), el("span", {class:"meta", text: sport === "ufc" ? p[3] : `${p[3]}, ${p[2]}`})); li.onmousedown = e => { e.preventDefault(); input.value = ""; close(); openPlayer(p[0]); }; ul.append(li); });
-    if (!opts.length){ close(); return; }
+    opts_.forEach((o, i) => { const li = el("li", {role:"option", id:`pr-${i}`, class: o.team ? "team-opt" : ""}, el("span", {text:o.label}), el("span", {class:"meta", text:o.meta})); li.onmousedown = e => { e.preventDefault(); choose(o); }; ul.append(li); });
+    if (!opts_.length){ close(); return; }
     active = 0; mark(); ul.hidden = false; input.setAttribute("aria-expanded","true");
   };
   const mark = () => [...ul.children].forEach((li, i) => li.setAttribute("aria-selected", String(i === active)));
-  input.oninput = show; input.onfocus = show; input.onblur = () => setTimeout(close, 100);
+  input.oninput = () => { if (opts.onInput) opts.onInput(input.value); show(); }; input.onfocus = show; input.onblur = () => setTimeout(close, 100);
   input.onkeydown = e => {
     if (ul.hidden) return;
-    if (e.key === "ArrowDown"){ e.preventDefault(); active = (active + 1) % opts.length; mark(); }
-    else if (e.key === "ArrowUp"){ e.preventDefault(); active = (active - 1 + opts.length) % opts.length; mark(); }
-    else if (e.key === "Enter" && opts[active]){ e.preventDefault(); input.value = ""; close(); openPlayer(opts[active][0]); }
+    if (e.key === "ArrowDown"){ e.preventDefault(); active = (active + 1) % opts_.length; mark(); }
+    else if (e.key === "ArrowUp"){ e.preventDefault(); active = (active - 1 + opts_.length) % opts_.length; mark(); }
+    else if (e.key === "Enter" && opts_[active]){ e.preventDefault(); choose(opts_[active]); }
     else if (e.key === "Escape") close();
   };
-  host.append(wrap);
+  return wrap;
+}
+
+/* ---------- Team search: a team's next game and the likeliest same-game parlay for it ---------- */
+// team names come from the slip reader's table (ESPN codes, nicknames, cities, other codes) for the four pro leagues;
+// soccer clubs and cricket teams are already named in full, and a UFC fighter is his own "team"
+const PRO_TEAMS = ["nfl","nba","nhl","mlb"];
+const teamTables = {};
+function teamTable(sp){
+  if (teamTables[sp]) return teamTables[sp];
+  const m = new Map(), text = (typeof SLIP !== "undefined" && SLIP.TEAMS && SLIP.TEAMS[sp]) || "";
+  text.split("\n").filter(r => r.trim()).forEach(r => {
+    const [abbr, nicks, cities, alts] = r.split("|"), ns = nicks.split("/"), cs = cities.split("/"), codes = [abbr, ...(alts ? alts.split("/") : [])];
+    const row = {code: sp === "nfl" ? teamFix(abbr) : abbr, nick: ns[0], city: cs.find(c => !c.includes(ns[0])) || cs[0], keys: [...ns, ...cs, ...cs.map(c => c + " " + ns[0])].map(norm), codes: codes.map(norm)};
+    codes.forEach(c => m.set(sp === "nfl" ? teamFix(c) : c, row));
+  });
+  return teamTables[sp] = m;
+}
+const teamRow = (sp, code) => teamTable(sp).get(code) || null;
+function teamName(sp, code, short){
+  const r = PRO_TEAMS.includes(sp) && teamRow(sp, code);
+  return r ? (short ? r.nick : r.city.includes(r.nick) ? r.city : `${r.city} ${r.nick}`) : String(code || "");
+}
+// "Ben" finds the Bengals: a name or city that starts with it (any word), a longer piece anywhere in it, or the exact code
+function nameHit(keys, codes, q){
+  return codes.includes(q) || keys.some(k => k.startsWith(q) || k.split(" ").some(w => w.startsWith(q)) || (q.length >= 4 && k.includes(q)));
+}
+const whenText = ng => !ng ? "" : ng.time && String(ng.time).includes("T") ? kickoff(ng.time)
+  : `${new Date(ng.date + "T12:00:00").toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric"})}${ng.time ? ", " + ng.time : ""}`;
+function nextText(sp, ng){
+  if (!ng) return "No game scheduled";
+  return `${sp === "ufc" ? "vs" : vsAt(ng.home)} ${teamName(sp, ng.opp, true)}, ${whenText(ng)}`;
+}
+// teams matching the query: this sport's first (with its next game), then the other pro leagues' (tap to switch)
+function teamHits(q){
+  const out = [];
+  if (isGameSport(sport)){
+    const d = gameReady[sport];
+    if (d) d.teams.forEach(r => {
+      const t = teamInfo(d, r[0]);
+      if (!nameHit([t.name, t.short, t.city, t.nick].map(norm), [norm(r[0])], q)) return;
+      const g = d.games.find(x => x.home === r[0] || x.away === r[0]);
+      out.push({team: true, sp: sport, code: r[0], label: t.name, has: !!g,
+        meta: g ? `${g.home === r[0] ? "vs" : "at"} ${teamInfo(d, g.home === r[0] ? g.away : g.home).short}, ${kickoff(g.start)}` : "No game in the next few days",
+        pick: () => openCollegeTeam(d, sport, r[0])});
+    });
+  } else if (index){
+    const codes = new Set([...Object.keys(index.next || {}), ...(sport === "ufc" ? [] : index.players.map(p => p[2]))]);
+    codes.forEach(code => {
+      const r = PRO_TEAMS.includes(sport) && teamRow(sport, code);
+      const keys = r ? r.keys : [norm(code)], cs = r ? [...r.codes, norm(code)] : [norm(code)];
+      if (sport === "ufc" && !index.next[code]) return;
+      if (!nameHit(keys, cs, q)) return;
+      const ng = index.next && index.next[code];
+      out.push({team: true, sp: sport, code, has: !!ng, label: sport === "ufc" ? `${code} vs ${ng.opp}` : teamName(sport, code),
+        meta: sport === "ufc" ? `Fight, ${whenText(ng)}` : nextText(sport, ng), pick: () => openTeam(code)});
+    });
+  }
+  out.sort((a, b) => b.has - a.has || a.label.localeCompare(b.label));
+  const here = out.slice(0, 4);
+  // the other pro leagues, so "Bengals" works from any tab
+  const other = [];
+  PRO_TEAMS.filter(sp => sp !== sport).forEach(sp => {
+    const seen = new Set();
+    teamTable(sp).forEach(r => {
+      if (seen.has(r) || !nameHit(r.keys, r.codes, q)) return;
+      seen.add(r);
+      other.push({team: true, sp, code: r.code, label: teamName(sp, r.code), meta: `${sportLabel(sp)}, see the matchup`, pick: () => switchSport(sp, null, r.code)});
+    });
+  });
+  return [...here, ...other.slice(0, Math.max(0, 4 - here.length))];
+}
+let team = null;
+const sgpData = {};
+const loadSgp = sp => sgpData[sp] || (sgpData[sp] = getJSON(`data/props/${sp}/sgp.json`).catch(() => { delete sgpData[sp]; return null; }));
+function openTeam(code){
+  player = null; team = code;
+  history.replaceState(null, "", `#sp=${sport}&team=${encodeURIComponent(code)}`);
+  window.scrollTo({top:0, behavior:"smooth"});
+  render();
+}
+// the likeliest same-game parlay of k legs: the most likely props in the game, one per player first
+// (two props on one player lean on each other the most), then players' second props if k needs more
+function sgpPick(cands, k){
+  const sorted = [...cands].sort((a, b) => b.p - a.p), legs = [], who = new Set();
+  for (const c of sorted){ if (legs.length >= k) break; if (!who.has(c.pid)){ legs.push(c); who.add(c.pid); } }
+  for (const c of sorted){ if (legs.length >= k) break; if (!legs.includes(c)) legs.push(c); }
+  return {p: legs.reduce((x, c) => x * c.p, 1), legs};
+}
+const SGP_NOTE = "Legs in the same game move together (a blowout or a slow game can hit or sink several at once), so the real chance can land a bit above or below the one shown, and books price same-game parlays with that in mind. Compare the fair odds with your book's.";
+function sgpCard(k, p, rows, foot, slipFn){
+  return el("div", {class:"parlays"}, el("div", {class:`parlay ${tier(p, k)}`},
+    el("div", {class:"parlay-top"}, el("strong", {text:"Best same-game parlay"}), chancePill(p, k)),
+    el("ul", {}, ...rows),
+    el("div", {class:"parlay-foot"}, el("small", {text:`Fair odds ${toAmerican(p)}. ${foot}`}),
+      el("button", {class:"btn tiny", text:"Check in slip", onclick: slipFn}))));
+}
+function matchTitle(sp, code, ng){
+  if (sp === "ufc") return `${code} vs ${ng.opp}`;
+  const me = teamName(sp, code), them = teamName(sp, ng.opp);
+  return ng.home === 1 ? `${them} at ${me}` : ng.home === 0 ? `${me} at ${them}` : `${me} vs ${them}`;
+}
+async function renderTeam(){
+  const app = $("app"); app.innerHTML = "";
+  const sp = sport, code = team, ng = index.next && index.next[code];
+  const box = el("section", {class:"panel best"});
+  app.append(box);
+  if (!ng){
+    box.append(el("h2", {text: teamName(sp, code)}),
+      el("p", {class:"empty", style:"margin:0", text:"No game on the schedule for this team in today's data, so there's no matchup to build a parlay for yet."}));
+    return;
+  }
+  box.append(el("h2", {text: matchTitle(sp, code, ng)}), el("p", {class:"empty", style:"margin:0", text:"Loading the matchup..."}));
+  const data = await loadSgp(sp);
+  if (sp !== sport || team !== code || !box.isConnected) return;
+  box.replaceWith(teamPanel(sp, code, ng, data));
+}
+function teamPanel(sp, code, ng, data){
+  const box = el("section", {class:"panel best", id:"team-panel"});
+  const unit = sp === "ufc" ? "fight" : "game";
+  box.append(el("div", {class:"bar-row", style:"justify-content:space-between"},
+      el("h2", {text: matchTitle(sp, code, ng)}),
+      el("button", {class:"btn tiny", text:"Close", onclick: () => { team = null; history.replaceState(null, "", `#sp=${sp}`); render(); }})),
+    el("p", {class:"sub", text:`${ng.week != null ? `Week ${ng.week}, ` : ""}${whenText(ng)}${ng.event ? `, ${ng.event}` : ""}. ${sp === "ufc" ? "" : `${teamName(sp, code, true)} ${vsAt(ng.home)} ${teamName(sp, ng.opp, true)}.`}`}));
+  const g = data && data.teams && data.games[data.teams[code]];
+  const cands = g ? g.legs : [];
+  if (cands.length < 2){
+    box.append(el("p", {class:"empty", style:"margin:0", text: !data
+      ? "Same-game picks aren't built yet. They appear after the next daily update."
+      : `The trained model hasn't priced enough props for this ${unit} yet. It only prices players with a steady recent role, and injured players are left out.`}));
+    return box;
+  }
+  const redraw = () => box.replaceWith(teamPanel(sp, code, ng, data));
+  const maxLegs = Math.min(MAX_LEGS, cands.length), k = Math.min(parlayLegs, maxLegs);
+  const best = sgpPick(cands, k);
+  box.append(el("div", {class:"bar-row pick-head"}, el("h3", {text:`Best ${k}-leg parlay for this ${unit}`}), legPicker(maxLegs, redraw)),
+    parlayLegs > maxLegs ? el("p", {class:"sub", text:`The model has ${maxLegs} props it can price in this ${unit}, so ${maxLegs} legs is the most.`}) : "",
+    sgpCard(k, best.p, best.legs.map(c => el("li", {},
+        el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}),
+        el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:` ${sp === "ufc" ? "" : teamName(sp, c.team, true) + ", "}${pct(c.p)}`}))),
+      `Each leg is the trained model's chance at the line nearest the player's recent average, since real lines aren't in the free data.`,
+      () => checkParlay(best.legs, sp)),
+    el("p", {class:"sub", text: SGP_NOTE}));
+  // every prop the model likes in the game, one card a team
+  const top = new Map();
+  [...cands].sort((a, b) => b.p - a.p).forEach(c => { const t = sp === "ufc" ? c.pid : c.team; if (!top.has(t)) top.set(t, []); if (top.get(t).length < 10) top.get(t).push(c); });
+  box.append(el("h3", {text:`The likeliest props in this ${unit}`}),
+    el("p", {class:"sub", text:"Up to 10 a side, likeliest first. Tap a name to check it at your book's line."}),
+    gameCards([...top.values()].flat().map(c => ({key: sp === "ufc" ? c.pid : c.team, head: sp === "ufc" ? c.name : teamName(sp, c.team), sub: "", p: c.p,
+      row: el("li", {}, chancePill(c.p), el("div", {}, el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}),
+        el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:`Hit ${c.l10[0]} of his last ${c.l10[1]}.`})))}))));
+  return box;
 }
 
 /* ---------- Best bets: the trained model's strongest picks and parlays (any number of legs) for the next slate ---------- */
@@ -458,11 +617,11 @@ function cardOrder(){
 /* ---------- College game lines: spread, moneyline and total picks from team ratings ---------- */
 // scripts/update_college_games.py writes data/props/<cfb|cbb>/games.json every morning: a rating for every team, the model's
 // margin and total for each game in the next few days, and the book's line from ESPN when it has one
-const gameData = {};
+const gameData = {}, gameReady = {};
 const loadGames = sp => gameData[sp] || (gameData[sp] = getJSON(`data/props/${sp}/games.json`).then(d => {
   d.byAbbr = new Map(d.teams.map(r => [r[0], r]));
   d.games = d.games.filter(g => g.m != null && (!g.start || new Date(g.start) > Date.now()));   // not started yet
-  return d;
+  return gameReady[sp] = d;
 }).catch(e => { delete gameData[sp]; throw e; }));
 const schoolKey = s => norm(s || "").replace(/[^a-z0-9]/g, "");
 function teamInfo(d, abbr){
@@ -556,9 +715,17 @@ let gameView = {filter:"", open:null};
 function gameSportName(sp){ return sp === "cfb" ? "college football" : "college basketball"; }
 function renderGamePicker(d, sp){
   const host = $("picker"); host.innerHTML = "";
-  const input = el("input", {type:"search", placeholder:`Find a ${sp === "cfb" ? "college football" : "college basketball"} team`, "aria-label":"Find a team", value: gameView.filter, autocomplete:"off"});
-  input.oninput = () => { gameView.filter = input.value; renderGames(d, sp); };
-  host.append(el("div", {class:"search", style:"max-width:520px"}, input));
+  // typing narrows the games below; picking a team opens its game with the best same-game parlay
+  host.append(searchBox(`Find a ${gameSportName(sp)} team`, q => teamHits(q).slice(0, 8), "Find a team",
+    {keep: true, value: gameView.filter, onInput: v => { gameView.filter = v; gameView.open = null; renderGames(d, sp); }}));
+}
+function openCollegeTeam(d, sp, abbr){
+  const g = d.games.find(x => x.home === abbr || x.away === abbr);
+  gameView.open = g ? g.id : null;
+  history.replaceState(null, "", `#sp=${sp}&team=${encodeURIComponent(abbr)}`);
+  if (!g){ toast(`${teamInfo(d, abbr).name} has no game in the next few days.`); return; }
+  renderGames(d, sp);
+  const p = $("game-panel"); if (p) p.scrollIntoView({behavior:"smooth", block:"start"});
 }
 function renderGames(d, sp){
   const app = $("app"); app.innerHTML = "";
@@ -597,7 +764,7 @@ function renderGames(d, sp){
   if (legs.length >= 2){
     const p = top1.p;
     box.append(el("div", {class:"bar-row pick-head"}, el("h3", {text:`Best ${k}-leg parlay`}), legPicker(maxLegs, redraw)),
-      parlayLegs > maxLegs ? el("p", {class:"sub", text:`There are ${maxLegs} games with a pick right now, so ${maxLegs} legs is the most at one leg per game.`}) : null,
+      parlayLegs > maxLegs ? el("p", {class:"sub", text:`There are ${maxLegs} games with a pick right now, so ${maxLegs} legs is the most at one leg per game.`}) : "",
       el("div", {class:"parlays"}, el("div", {class:`parlay ${tier(p, k)}`},
       el("div", {class:"parlay-top"}, el("strong", {text:"Best parlay"}), chancePill(p, k)),
       el("ul", {}, ...legs.map(b => el("li", {}, el("button", {class:"linkish", text:betText(d, b), onclick: () => openGame(d, sp, b.g)}),
@@ -674,10 +841,22 @@ function gamePanel(d, sp, g){
     }
   };
   draw();
+  // the likeliest same-game parlay: the side the model favors on the winner, the spread and the total (game lines only)
+  const sides = gameBets(d, g).filter(b => b.p >= 0.5).filter((b, i, a) => a.findIndex(x => x.market === b.market) === i).sort((a, b) => b.p - a.p);
+  if (sides.length >= 2){
+    const redraw = () => box.replaceWith(gamePanel(d, sp, g));
+    const k = Math.min(parlayLegs, sides.length), legs = sides.slice(0, k), p = legs.reduce((x, b) => x * b.p, 1);
+    box.append(el("div", {class:"bar-row pick-head"}, el("h3", {text:`Best ${k}-leg same-game parlay`}), legPicker(sides.length, redraw)),
+      parlayLegs > sides.length ? el("p", {class:"sub", text:`College bets here are game lines only (winner, spread and total), so ${sides.length} legs is the most for one game.`}) : "",
+      sgpCard(k, p, legs.map(b => el("li", {}, el("strong", {text:betText(d, b)}), el("small", {text:` ${MARKET_LABEL[b.market]}${b.market !== "ml" && !b.book ? " (model line)" : ""}, ${pct(b.p)}`}))),
+        "Game lines only, no player props.", () => addBets(d, sp, legs, true)),
+      el("p", {class:"sub", text: SGP_NOTE + (legs.some(b => b.market === "ml") && legs.some(b => b.market === "spread") ? " Winning and covering go together, so many books won't combine a moneyline and spread on the same team, or price it lower." : "")}),
+      el("h3", {text:"Every line in this game"}));
+  }
   box.append(ul, el("p", {class:"why", text:`Chances use a spread of about ${fmt1(d.model.sd)} points around the expected margin and ${fmt1(d.model.sd_total)} around the total, which is how far games landed from the model's number last season.`}));
   return box;
 }
-async function showGames(id){
+async function showGames(id, teamCode){
   const status = $("status");
   let d;
   try { d = await loadGames(id); }
@@ -687,9 +866,11 @@ async function showGames(id){
   status.textContent = `${d.games.length} game${d.games.length === 1 ? "" : "s"} in the next few days${d.games.length ? `, ${lined} with a book line` : ""}. ${d.games_this_season ? `Ratings from the ${d.season} season (${d.games_this_season} games played)` : `The ${d.season} season hasn't started, so ratings come from last season`}, updated ${TS.ago(d.updated)}.`;
   renderGamePicker(d, id);
   renderGames(d, id);
+  if (teamCode) openCollegeTeam(d, id, teamCode);
 }
 
 async function openPlayer(id, fromHash){
+  team = null;
   $("app").innerHTML = ""; $("app").append(el("section", {class:"panel"}, el("p", {class:"empty", style:"margin:0", text:"Loading player..."})));
   try { player = await getJSON(BASE() + "p/" + id + ".json"); }
   catch(e){ $("app").innerHTML = ""; $("app").append(el("section", {class:"panel"}, el("p", {class:"err", text:"Couldn't load that player. He may have been removed in today's update."}))); return; }
@@ -707,6 +888,7 @@ function writeHash(){
 }
 
 function render(){
+  if (!player && team){ renderTeam(); return; }
   if (!player){ renderLanding(); return; }
   const app = $("app"); app.innerHTML = "";
   const key = ui.stat, line = Number(ui.line), side = ui.side;
@@ -1624,30 +1806,32 @@ function trackSlip(){
 }
 
 /* ---------- Boot ---------- */
+let hashTeam = null;
 function readHash(){
   const h = new URLSearchParams(location.hash.slice(1));
   if (h.get("sp") && (CFG[h.get("sp")] || isGameSport(h.get("sp")))) sport = h.get("sp");
   if (h.get("s")) ui.stat = h.get("s");
   if (h.get("l")) ui.line = Number(h.get("l"));
   if (h.get("side") === "under") ui.side = "under";
+  hashTeam = h.get("team");
   return h.get("p");
 }
 function renderSports(){
   const nav = $("sports"); if (!nav) return; nav.innerHTML = "";
   SPORTS.forEach(([id, label]) => nav.append(el("button", {text:label, "data-sport":id, "aria-pressed": String(sport === id), onclick: () => {
     if (id !== sport) switchSport(id);
-    else if (player && index){ player = null; history.replaceState(null, "", `#sp=${id}`); render(); }   // back to best bets
+    else if ((player || team) && index){ player = null; team = null; history.replaceState(null, "", `#sp=${id}`); render(); }   // back to best bets
   }})));
 }
 const teamFix = t => ({LAR:"LA", JAC:"JAX", WSH:"WAS"}[t] || t);   // Sleeper vs nflverse team codes
-async function switchSport(id, playerId){
-  sport = id; player = null; index = null; defense = null; injuries = null; model = null;
+async function switchSport(id, playerId, teamCode){
+  sport = id; player = null; team = null; index = null; defense = null; injuries = null; model = null;
   ui = Object.assign(ui, playerId ? {} : {stat:null, line:null}, {range:"10", mate:"", oddsO:"", oddsU:""});   // a shared link keeps its prop and line
   store.set("tradescale:props-sport", id);
   renderSports(); $("picker").innerHTML = ""; $("app").innerHTML = "";
   const status = $("status"); status.classList.remove("warn"); status.textContent = "Loading...";
-  if (!playerId || isGameSport(id)) history.replaceState(null, "", `#sp=${id}`);
-  if (isGameSport(id)){ gameView = {filter:"", open:null}; await showGames(id); return; }
+  if (!playerId && !teamCode || isGameSport(id)) history.replaceState(null, "", `#sp=${id}`);
+  if (isGameSport(id)){ gameView = {filter:"", open:null}; await showGames(id, teamCode); return; }
   try {
     [index, defense] = await Promise.all([getJSON(BASE() + "index.json"), getJSON(BASE() + "defense.json")]);
   } catch(e){
@@ -1666,14 +1850,16 @@ async function switchSport(id, playerId){
     injuries = new Map(pool.filter(p => p.inj).map(p => [norm(p.name) + (id === "nfl" ? "|" + teamFix(p.team) : ""), p.inj]));
     if (player) render();
   }).catch(() => {});
-  if (playerId) openPlayer(playerId, true); else render();
+  if (playerId) openPlayer(playerId, true);
+  else if (teamCode) openTeam(teamCode);
+  else render();
 }
 (() => {
   const id = readHash();
   if (!id && !new URLSearchParams(location.hash.slice(1)).get("sp")) sport = store.get("tradescale:props-sport") || sport;   // a link to a sport wins over the last one used
   renderTracker();
   renderSlip();
-  switchSport(sport, id);
+  switchSport(sport, id, id ? null : hashTeam);
   pollSoon(1500);
 })();
 })();
