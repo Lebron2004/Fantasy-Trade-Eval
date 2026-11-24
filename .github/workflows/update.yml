@@ -74,6 +74,14 @@ jobs:
         continue-on-error: true
         run: python scripts/best_bets.py
 
+      - name: Sportsbook odds for the picks (best app per bet; skipped without an ODDS_API_KEY secret)
+        continue-on-error: true
+        run: python scripts/update_odds.py
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          ODDS_DAILY_CREDITS: ${{ vars.ODDS_DAILY_CREDITS }}
+          ODDS_REGIONS: ${{ vars.ODDS_REGIONS }}
+
       - name: Grade past picks and update the analytics track record
         continue-on-error: true
         run: python scripts/analytics.py

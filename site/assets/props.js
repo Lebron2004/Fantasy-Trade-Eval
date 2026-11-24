@@ -387,10 +387,10 @@ function sgpPick(cands, k){
   return {p: legs.reduce((x, c) => x * c.p, 1), legs};
 }
 const SGP_NOTE = "Legs in the same game move together (a blowout or a slow game can hit or sink several at once), so the real chance can land a bit above or below the one shown, and books price same-game parlays with that in mind. Compare the fair odds with your book's.";
-function sgpCard(k, p, rows, foot, slipFn){
+function sgpCard(k, p, rows, foot, slipFn, books){
   return el("div", {class:"parlays"}, el("div", {class:`parlay ${tier(p, k)}`},
     el("div", {class:"parlay-top"}, el("strong", {text:"Best same-game parlay"}), chancePill(p, k)),
-    el("ul", {}, ...rows),
+    el("ul", {}, ...rows), books || "",
     el("div", {class:"parlay-foot"}, el("small", {text:`Fair odds ${toAmerican(p)}. ${foot}`}),
       el("button", {class:"btn tiny", text:"Check in slip", onclick: slipFn}))));
 }
@@ -410,7 +410,7 @@ async function renderTeam(){
     return;
   }
   box.append(el("h2", {text: matchTitle(sp, code, ng)}), el("p", {class:"empty", style:"margin:0", text:"Loading the matchup..."}));
-  const data = await loadSgp(sp);
+  const [data] = await Promise.all([loadSgp(sp), loadOdds()]);
   if (sp !== sport || team !== code || !box.isConnected) return;
   box.replaceWith(teamPanel(sp, code, ng, data));
 }
@@ -420,6 +420,7 @@ function teamPanel(sp, code, ng, data){
   box.append(el("div", {class:"bar-row", style:"justify-content:space-between"},
       el("h2", {text: matchTitle(sp, code, ng)}),
       el("button", {class:"btn tiny", text:"Close", onclick: () => { team = null; history.replaceState(null, "", `#sp=${sp}`); render(); }})),
+    appsPicker(() => box.replaceWith(teamPanel(sp, code, ng, data))) || "",
     el("p", {class:"sub", text:`${ng.week != null ? `Week ${ng.week}, ` : ""}${whenText(ng)}${ng.event ? `, ${ng.event}` : ""}. ${sp === "ufc" ? "" : `${teamName(sp, code, true)} ${vsAt(ng.home)} ${teamName(sp, ng.opp, true)}.`}`}));
   const g = data && data.teams && data.games[data.teams[code]];
   const cands = g ? g.legs : [];
@@ -437,8 +438,8 @@ function teamPanel(sp, code, ng, data){
     sgpCard(k, best.p, best.legs.map(c => el("li", {},
         el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}),
         el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:` ${sp === "ufc" ? "" : teamName(sp, c.team, true) + ", "}${pct(c.p)}`}))),
-      `Each leg is the trained model's chance at the line nearest the player's recent average, since real lines aren't in the free data.`,
-      () => checkParlay(best.legs, sp)),
+      `Each leg is the trained model's chance at the line nearest the player's recent average.`,
+      () => checkParlay(best.legs, sp), parlayBooks(propLegs(best.legs, sp), true)),
     el("p", {class:"sub", text: SGP_NOTE}));
   // every prop the model likes in the game, one card a team
   const top = new Map();
@@ -447,7 +448,135 @@ function teamPanel(sp, code, ng, data){
     el("p", {class:"sub", text:"Up to 10 a side, likeliest first. Tap a name to check it at your book's line."}),
     gameCards([...top.values()].flat().map(c => ({key: sp === "ufc" ? c.pid : c.team, head: sp === "ufc" ? c.name : teamName(sp, c.team), sub: "", p: c.p,
       row: el("li", {}, chancePill(c.p), el("div", {}, el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}),
-        el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:`Hit ${c.l10[0]} of his last ${c.l10[1]}.`})))}))));
+        el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:`Hit ${c.l10[0]} of his last ${c.l10[1]}.`}), propBooks(c, sp) || ""))}))));
+  return box;
+}
+
+/* ---------- Sportsbook odds: which app has the best price for each pick ---------- */
+// scripts/update_odds.py writes data/props/odds.json every morning from The Odds API: each book's line and price for the
+// day's picks, with the trained model's chance at that book's own line. Only books that post a player's prop list him.
+let odds = null, oddsP = null;
+const loadOdds = () => oddsP || (oddsP = getJSON("data/props/odds.json").then(d => (odds = d)).catch(() => (odds = null)));
+const bookName = k => (odds && odds.books && odds.books[k]) || k;
+// "My apps": the books you can bet on (by state or by account); every book until you pick
+const myBooks = () => { const m = store.get("tradescale:my-books"); return Array.isArray(m) && m.length ? m : null; };
+const usableBook = k => { const m = myBooks(); return !m || m.includes(k); };
+const decOdds = a => a == null ? null : a > 0 ? 1 + a / 100 : 1 + 100 / -a;
+const amer = a => a == null ? "–" : a > 0 ? "+" + a : String(a).replace("-", "−");
+const decToAmer = d => d >= 2 ? "+" + Math.round((d - 1) * 100) : String(Math.round(-100 / (d - 1))).replace("-", "−");
+// the same name key scripts/update_odds.py writes (no accents, case, punctuation or Jr./III)
+const oddsKey = s => String(s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/['.]/g, "")
+  .replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(w => w && !["jr","sr","ii","iii","iv","v"].includes(w)).join(" ");
+// offers: [{b, line, price, p, link}] for one bet, best first: what the bet is worth at each book's own line and price
+// (the model's chance there times the payout), books without a model chance after, by price
+function rankOffers(list){
+  const v = o => o.p != null ? o.p * decOdds(o.price) : null;
+  return list.filter(o => o.price != null && usableBook(o.b)).sort((a, b) => {
+    const va = v(a), vb = v(b);
+    if (va != null && vb != null) return vb - va;
+    if (va != null || vb != null) return va != null ? -1 : 1;
+    return decOdds(b.price) - decOdds(a.price);
+  });
+}
+// a player prop pick {name, key, line, side, p} -> every book's offer on the same side
+function propOffers(sp, c){
+  const rows = odds && odds.props && ((odds.props[sp] || {})[oddsKey(c.name)] || {})[c.key];
+  if (!rows) return [];
+  const over = c.side !== "under";
+  return rankOffers(rows.map(([b, line, o, u, pO, lo, lu]) => {
+    const p = pO != null ? (over ? pO : 1 - pO) : line === c.line ? c.p : null;
+    return {b, line, price: over ? o : u, p, link: over ? lo : lu};
+  }));
+}
+// a college game bet (see gameBets) -> every book's offer, with the model's chance at that book's line
+function gameOffers(d, sp, b){
+  const rows = odds && odds.games && (odds.games[sp] || {})[b.g.id];
+  if (!rows) return [];
+  return rankOffers(rows.map(r => {
+    const ln = r.ln || {};
+    if (b.market === "ml"){ const k = b.home ? "mlH" : "mlA"; return {b: r.b, line: null, price: r[k], p: b.p, link: ln[k]}; }
+    if (b.market === "spread"){
+      if (r.sp == null) return {b: r.b};
+      const line = b.home ? r.sp : -r.sp, k = b.home ? "spH" : "spA";
+      return {b: r.b, line, price: r[k], p: gameChance(d, b.g, {market:"spread", home:b.home, line}), link: ln[k]};
+    }
+    if (b.market === "total"){
+      if (r.t == null) return {b: r.b};
+      const k = b.side === "under" ? "u" : "o";
+      return {b: r.b, line: r.t, price: r[k], p: gameChance(d, b.g, {market:"total", side:b.side, line:r.t}), link: ln[k]};
+    }
+    return {b: r.b};
+  }));
+}
+async function copyText(text){
+  try { await navigator.clipboard.writeText(text); toast("Copied. Paste it into your app's search to find the bet."); }
+  catch(e){ window.prompt("Copy the bet:", text); }
+}
+const copyBtn = (text, label = "Copy") => el("button", {class:"btn tiny ghost", text:label, "aria-label":`Copy: ${text}`, onclick: e => { e.stopPropagation(); copyText(text); }});
+const openBtn = (o, label) => o && o.link ? el("a", {class:"btn tiny", href:o.link, target:"_blank", rel:"noopener", text:label || `Open ${bookName(o.b)}`}) : null;
+// one pick's apps: the best app first, then every other app that lists it. textAt(line) is the bet at that app's line,
+// copyAt(line) what the copy button copies, short(line) the line alone when an app's line differs from the best one's
+function booksLine(offers, textAt, copyAt, short){
+  if (!offers.length) return null;
+  const best = offers[0], diff = o => o.line != null && o.line !== best.line ? `${short(o.line)} at ` : "";
+  return el("div", {class:"books"},
+    el("div", {class:"books-best"}, el("span", {class:"book-tag", text:"Best app"}),
+      el("strong", {text:`${bookName(best.b)} ${amer(best.price)}`}),
+      el("small", {text:` ${textAt(best.line)}${best.p != null ? `, ${pct(best.p)} to hit there` : ""}`}),
+      copyBtn(copyAt(best.line)), openBtn(best)),
+    offers.length > 1 ? el("small", {class:"books-rest", text:"Also: " + offers.slice(1, 6).map(o => `${bookName(o.b)} ${diff(o)}${amer(o.price)}`).join(", ")
+      + (offers.length > 6 ? `, and ${offers.length - 6} more` : "")}) : null);
+}
+function propBooks(c, sp){
+  return booksLine(propOffers(sp, c), line => pickText({...c, line}, sp), line => `${c.name} ${pickText({...c, line}, sp)}`,
+    line => `${c.side === "under" ? "U" : "O"} ${line}`);
+}
+function gameBooks(d, sp, b){
+  return booksLine(gameOffers(d, sp, b), line => betText(d, {...b, line}), line => `${betText(d, {...b, line})} (${matchup(d, b.g)})`,
+    line => b.market === "total" ? `${b.side === "under" ? "U" : "O"} ${line}` : signed(line));
+}
+// a parlay: the app with the best payout among those that list every leg (else the one that lists the most),
+// legs: [{offers, text}] where text(line) is the leg as you'd type it
+function parlayBooks(legs, sameGame){
+  if (!odds || !legs.length) return null;
+  const books = new Set(legs.flatMap(l => l.offers.map(o => o.b)));
+  if (!books.size) return null;
+  const rows = [...books].map(b => {
+    const picks = legs.map(l => l.offers.find(o => o.b === b) || null);
+    const have = picks.filter(Boolean), dec = have.reduce((x, o) => x * decOdds(o.price), 1);
+    const p = have.every(o => o.p != null) ? have.reduce((x, o) => x * o.p, 1) : null;
+    return {b, picks, n: have.length, dec, p, v: p != null ? p * dec : null};
+  }).sort((a, b) => b.n - a.n || (a.v != null && b.v != null ? b.v - a.v : b.dec - a.dec));
+  const top = rows[0], all = rows.filter(r => r.n === legs.length);
+  const copy = legs.map((l, i) => l.text(top.picks[i] ? top.picks[i].line : undefined)).join("\n");
+  const head = top.n === legs.length
+    ? [el("span", {class:"book-tag", text:"Best app"}), el("strong", {text:`${bookName(top.b)} ${decToAmer(top.dec)}`}),
+       el("small", {text:` all ${legs.length} legs${sameGame ? ", legs' prices multiplied (the app prices same-game parlays lower)" : ""}`})]
+    : [el("span", {class:"book-tag", text:"Most legs"}), el("strong", {text:bookName(top.b)}),
+       el("small", {text:` lists ${top.n} of ${legs.length} legs. No app has all of them today, so the others may need another app.`})];
+  return el("div", {class:"books"},
+    el("div", {class:"books-best"}, ...head, copyBtn(copy, "Copy parlay")),
+    all.length > 1 ? el("small", {class:"books-rest", text:"Also with every leg: " + all.slice(1, 6).map(r => `${bookName(r.b)} ${decToAmer(r.dec)}`).join(", ")}) : null);
+}
+const propLegs = (legs, sp) => legs.map(c => ({offers: propOffers(sp, c), text: line => `${c.name} ${pickText(line != null ? {...c, line} : c, sp)}`}));
+const gameLegs = (d, sp, legs) => legs.map(b => ({offers: gameOffers(d, sp, b), text: line => `${betText(d, line !== undefined ? {...b, line} : b)} (${matchup(d, b.g)})`}));
+// pick the apps you can use; the best app is chosen among these
+function appsPicker(redraw){
+  if (!odds || !odds.books || !Object.keys(odds.books).length) return null;
+  const mine = myBooks(), all = Object.entries(odds.books).sort((a, b) => a[1].localeCompare(b[1]));
+  const box = el("details", {class:"apps"}, el("summary", {text:`Your apps: ${mine ? mine.map(bookName).join(", ") : "all"}`}));
+  const grid = el("div", {class:"apps-grid"});
+  all.forEach(([k, name]) => {
+    const cb = el("input", {type:"checkbox", checked: !mine || mine.includes(k) ? "" : false});
+    cb.onchange = () => {
+      const picked = [...grid.querySelectorAll("input")].map((x, i) => x.checked ? all[i][0] : null).filter(Boolean);
+      store.set("tradescale:my-books", picked.length === all.length ? [] : picked);
+      redraw();
+    };
+    grid.append(el("label", {}, cb, el("span", {text:name})));
+  });
+  box.append(el("p", {class:"sub", text:"Tick the sportsbook apps you have (or that are legal where you are). Each pick's best app is chosen from these."}), grid,
+    el("p", {class:"why", text:`Prices from ${odds.source || "the books"}, updated ${TS.ago(odds.updated)}. Lines move during the day, so check the price in the app before you bet.`}));
   return box;
 }
 
@@ -522,16 +651,16 @@ function gameCards(items){
 }
 function bestPanel(b, sp){
   const box = el("section", {class:"panel best"});
-  box.append(el("h2", {text:`Best bets for ${slateName(b)}`}));
+  const redraw = () => box.replaceWith(bestPanel(b, sp));
+  box.append(el("h2", {text:`Best bets for ${slateName(b)}`}), appsPicker(redraw) || "");
   if (!b.picks.length){ box.append(el("p", {class:"empty", style:"margin:0", text: b.note || "No picks for this slate yet."})); return box; }
   const unit = sp === "ufc" ? "fight" : "game";
   const basis = sp === "ufc" ? "his last 10 fights" : "his last 10 games";
   const fresh = sp === "ufc" ? "Rebuilt every morning with the latest results and the next card."
     : sp === "soc" || sp === "cri" ? "Rebuilt every morning with the latest results; players left out of their team's recent matches are skipped, since injury news and lineups aren't in the free data."
     : "Rebuilt every morning with the latest results and injury tags; injured players are left out.";
-  box.append(el("p", {class:"sub", text:`The trained model's most likely props across ${b.games} ${unit}${b.games === 1 ? "" : "s"}, each at the line nearest his average over ${basis}, since real sportsbook lines aren't in the free data. Your book's line may differ, so tap a pick to check it at that line. ${fresh}`}));
+  box.append(el("p", {class:"sub", text:`The trained model's most likely props across ${b.games} ${unit}${b.games === 1 ? "" : "s"}, each at the line nearest his average over ${basis}. ${odds && odds.props && odds.props[sp] ? "Where the apps have posted the prop, the best app shows under it (best payout for the model's chance at that app's own line), with every other app that lists him." : "Your book's line may differ, so tap a pick to check it at that line."} ${fresh}`}));
   const byId = new Map([...b.picks, ...(b.extra || [])].map(c => [c.pid + ":" + c.key, c]));
-  const redraw = () => box.replaceWith(bestPanel(b, sp));
   // build the parlays here at the chosen size, from the deeper pool when this morning's data has one
   const pool = (b.pool || [...b.picks.map(c => c.pid + ":" + c.key), ...(b.extra || []).map(c => c.pid + ":" + c.key)]).map(k => byId.get(k)).filter(Boolean);
   const gameOf = c => [c.team, c.opp].sort().join("-") + c.date;
@@ -549,6 +678,7 @@ function bestPanel(b, sp){
         el("ul", {}, ...legs.map(c => el("li", {},
           el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}),
           el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:` ${vsAt(c.home)} ${c.opp}, ${pct(c.p)}`})))),
+        parlayBooks(propLegs(legs, sp), false) || "",
         el("div", {class:"parlay-foot"}, el("small", {text:`Fair odds ${toAmerican(pl.p)}. One leg per ${sp === "ufc" ? "fight" : "game"}, so the legs don't lean on each other.`}),
           el("button", {class:"btn tiny", text:"Check in slip", onclick: () => checkParlay(legs, sp)})));
       grid.append(card);
@@ -563,7 +693,8 @@ function bestPanel(b, sp){
         chancePill(c.p),
         el("div", {}, el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}), sp === "ufc" ? null : el("span", {class:"tag", text:c.team}),
           el("div", {class:"pick-line", text:pickText(c, sp)}),
-          el("small", {text:`${vsAt(c.home)} ${c.opp}, ${shortDate(c.date)}. Hit ${c.l10[0]} of his last ${c.l10[1]}.${why ? ` Helped most by ${why}.` : ""}`}))));
+          el("small", {text:`${vsAt(c.home)} ${c.opp}, ${shortDate(c.date)}. Hit ${c.l10[0]} of his last ${c.l10[1]}.${why ? ` Helped most by ${why}.` : ""}`}),
+          propBooks(c, sp) || "")));
     });
     return ul;
   };
@@ -574,7 +705,7 @@ function bestPanel(b, sp){
       el("p", {class:"sub", text:`Every top pick and best over, one card a ${unit}, the ${unit} with the likeliest pick first. Tap a name to check it at your book's line.`}),
       gameCards(all.map(c => ({key: `${c.date}|${sp === "ufc" ? [c.name, c.opp].sort() : [c.team, c.opp].sort()}`, head: head(c), sub: shortDate(c.date), p: c.p,
         row: el("li", {}, chancePill(c.p), el("div", {}, el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}),
-          el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:`Hit ${c.l10[0]} of his last ${c.l10[1]}.`})))}))));
+          el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:`Hit ${c.l10[0]} of his last ${c.l10[1]}.`}), propBooks(c, sp) || ""))}))));
     return box;
   }
   box.append(pickHead("Most likely to hit", redraw), pickList(b.picks));
@@ -586,7 +717,7 @@ function bestPanel(b, sp){
   return box;
 }
 async function renderBest(host, sp){
-  const data = await loadBest();
+  const [data] = await Promise.all([loadBest(), loadOdds()]);
   if (sp !== sport || player || !host.isConnected) return;
   if (!data || !data.sports || !data.sports[sp]) return;
   bestDate = data.date;
@@ -739,7 +870,7 @@ function renderGames(d, sp){
       + `The model rates every team from this season's scores, with last season's games carrying the early weeks, and adds a home-field edge of ${fmt1(M.hfa || 0)} points. `
       + `Where the book has posted a line, the chances start from that line and move ${Math.round((M.k || 0) * 100)}% of the way toward the model, because that's how much of the gap held up on last season's games.`
       + (bt.games ? ` Tested week by week on ${bt.season} (${bt.games.toLocaleString()} games), it picked the winner ${pct(bt.winner)} of the time${bt.ats ? ` and went ${pct(bt.ats.pct)} against the spread` : ""}${bt.ou ? ` and ${pct(bt.ou.pct)} on totals` : ""}.` : "")
-      + ` Beating -110 takes 52.4%, so treat spread and total picks as leans.`}));
+      + ` Beating -110 takes 52.4%, so treat spread and total picks as leans.`}), appsPicker(() => renderGames(d, sp)) || "");
   app.append(intro);
   if (!d.games.length){
     intro.append(el("p", {class:"empty", style:"margin:0", text:`No ${gameSportName(sp)} games in the next few days. Picks show up here once the schedule has games.`}));
@@ -769,12 +900,13 @@ function renderGames(d, sp){
       el("div", {class:"parlay-top"}, el("strong", {text:"Best parlay"}), chancePill(p, k)),
       el("ul", {}, ...legs.map(b => el("li", {}, el("button", {class:"linkish", text:betText(d, b), onclick: () => openGame(d, sp, b.g)}),
         el("small", {text:` ${matchup(d, b.g)}, ${pct(b.p)}`})))),
+      parlayBooks(gameLegs(d, sp, legs), false) || "",
       el("div", {class:"parlay-foot"}, el("small", {text:`Fair odds ${toAmerican(p)}. One leg per game.`}),
         el("button", {class:"btn tiny", text:"Check in slip", onclick: () => addBets(d, sp, legs, true)})))));
   }
   const pickList = (bs, why) => el("ol", {class:"picks"}, ...bs.map(b => el("li", {class:"pick"}, chancePill(b.p),
     el("div", {}, el("button", {class:"linkish", text:betText(d, b), onclick: () => openGame(d, sp, b.g)}),
-      el("div", {class:"pick-line", text:matchup(d, b.g)}), el("small", {text:`${kickoff(b.g.start)}. ${why(b)}`})),
+      el("div", {class:"pick-line", text:matchup(d, b.g)}), el("small", {text:`${kickoff(b.g.start)}. ${why(b)}`}), gameBooks(d, sp, b) || ""),
     el("button", {class:"btn tiny", text:"+ Slip", "aria-label":`Add ${betText(d, b)} to the slip`, onclick: () => addBets(d, sp, [b])}))));
   const why = {spread: b => `Model line ${modelLineText(d, b.g)}, book ${bookLineText(d, b.g)}.`, total: b => `Model total ${fmt1(b.g.t)}, book ${b.line}.`,
     ml: b => b.odds != null ? `Book ${signed(b.odds)} (${pct(implied(b.odds))} with the cut).` : `Model line ${modelLineText(d, b.g)}.`};
@@ -783,7 +915,7 @@ function renderGames(d, sp){
       el("p", {class:"sub", text:"The best spreads, totals and winners, one card a game, the game with the likeliest pick first. Heavy favorites pay little, so compare a winner's chance with the book's price."}),
       gameCards([...spreads, ...totals, ...mls].map(b => ({key: b.g.id, head: matchup(d, b.g), sub: kickoff(b.g.start), p: b.p,
         row: el("li", {}, chancePill(b.p), el("div", {}, el("button", {class:"linkish", text:betText(d, b), onclick: () => openGame(d, sp, b.g)}),
-          el("small", {text:why[b.market](b)})),
+          el("small", {text:why[b.market](b)}), gameBooks(d, sp, b) || ""),
           el("button", {class:"btn tiny", text:"+ Slip", "aria-label":`Add ${betText(d, b)} to the slip`, onclick: () => addBets(d, sp, [b])}))}))));
   } else box.append(pickHead("Ranked picks", redraw));
   if (pickView === "pick" && spreads.length) box.append(el("h3", {text:"Best spread picks"}), pickList(spreads, b => `Model line ${modelLineText(d, b.g)}, book ${bookLineText(d, b.g)}.`));
@@ -849,7 +981,7 @@ function gamePanel(d, sp, g){
     box.append(el("div", {class:"bar-row pick-head"}, el("h3", {text:`Best ${k}-leg same-game parlay`}), legPicker(sides.length, redraw)),
       parlayLegs > sides.length ? el("p", {class:"sub", text:`College bets here are game lines only (winner, spread and total), so ${sides.length} legs is the most for one game.`}) : "",
       sgpCard(k, p, legs.map(b => el("li", {}, el("strong", {text:betText(d, b)}), el("small", {text:` ${MARKET_LABEL[b.market]}${b.market !== "ml" && !b.book ? " (model line)" : ""}, ${pct(b.p)}`}))),
-        "Game lines only, no player props.", () => addBets(d, sp, legs, true)),
+        "Game lines only, no player props.", () => addBets(d, sp, legs, true), parlayBooks(gameLegs(d, sp, legs), true)),
       el("p", {class:"sub", text: SGP_NOTE + (legs.some(b => b.market === "ml") && legs.some(b => b.market === "spread") ? " Winning and covering go together, so many books won't combine a moneyline and spread on the same team, or price it lower." : "")}),
       el("h3", {text:"Every line in this game"}));
   }
@@ -859,7 +991,7 @@ function gamePanel(d, sp, g){
 async function showGames(id, teamCode){
   const status = $("status");
   let d;
-  try { d = await loadGames(id); }
+  try { [d] = await Promise.all([loadGames(id), loadOdds()]); }
   catch(e){ status.classList.add("warn"); status.textContent = "College game data isn't built yet. It appears after the next daily update (or run the workflow on GitHub)."; return; }
   if (id !== sport) return;
   const lined = d.games.filter(g => g.line && g.line.spread != null).length;
@@ -981,6 +1113,9 @@ function render(){
     verdict.append(facts);
   } else verdict.append(el("p", {class:"empty", style:"margin:0", text:"Not enough games yet to project this player."}));
   ctl.append(verdict);
+  // which app has this prop, and the best price for it (only apps that list him)
+  const apps = pr ? propBooks({name: player.name, key, line, side, p: sideChance(player, key, line, side, pr).p}, sport) : null;
+  if (apps) ctl.append(apps);
 
   // hit-rate strip
   const strip = el("div", {class:"strip"});
@@ -1739,6 +1874,11 @@ function renderSlip(){
       el("div", {}, el("span", {class:"lbl", text:"Fair odds"}), el("strong", {text: modeled.length ? toAmerican(pAll) : "–"})),
       slip.stake ? el("div", {}, el("span", {class:"lbl", text: slip.bonus ? "Bonus bet" : "Stake"}), el("strong", {text:"$" + slip.stake})) : null));
   host.append(sum);
+  // which app pays the most for these legs (player props the morning's odds cover; game legs aren't matched here)
+  const propLegsIn = slip.legs.filter(l => !l.kind && !l.unsupported && l.key && l.line != null);
+  const slipBooks = propLegsIn.length === slip.legs.length ? parlayBooks(propLegsIn.map(l => ({offers: propOffers(l.sport, l),
+    text: line => `${l.name} ${pickText(line != null ? {...l, line} : l, l.sport)}`})), sameGame) : null;
+  if (slipBooks) host.append(slipBooks);
   const notes = [];
   if (weakest && modeled.length > 1) notes.push(`Weakest leg: ${legText(weakest)} at ${pct(weakest.p)}.`);
   if (slip.odds != null && slip.oddsFrom === "legs") notes.push("Slip odds are the legs' odds multiplied. If your book shows different odds for the whole slip, type them in.");
@@ -1859,6 +1999,7 @@ async function switchSport(id, playerId, teamCode){
   if (!id && !new URLSearchParams(location.hash.slice(1)).get("sp")) sport = store.get("tradescale:props-sport") || sport;   // a link to a sport wins over the last one used
   renderTracker();
   renderSlip();
+  loadOdds().then(() => { if (slip.open && slip.legs.length) renderSlip(); if (player) render(); });
   switchSport(sport, id, id ? null : hashTeam);
   pollSoon(1500);
 })();

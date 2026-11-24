@@ -108,6 +108,14 @@ Find the league ID in your league's web address: ESPN shows `leagueId=12345678`;
 
 Heads up: synced rosters and team names are published with your site (the secrets are not). Player matching uses ESPN and Yahoo IDs for football and names elsewhere; the sync log and the import list show how many players couldn't be matched.
 
+## Best app for each bet (sportsbook odds)
+
+Picks, parlays, team-search same-game parlays, college game picks, the player page and the slip reader can show which sportsbook app pays the most for each bet, with every other app's line and price. Only apps that actually post a player's prop are listed under it. The "best app" is the one where the bet is worth the most: the trained model's chance at that app's own line times its payout, so a better line can beat a slightly better price. Each bet has a **Copy** button (paste it into the app's search to find the bet), and an **Open** button when the feed has a link into that app. **Your apps** lets you tick only the books you have or that are legal where you are.
+
+The odds come from [The Odds API](https://the-odds-api.com) (DraftKings, FanDuel, BetMGM, Caesars, ESPN BET, BetRivers, Fanatics and more). To turn it on, get a free key there and add it as a repository secret named `ODDS_API_KEY` (Settings → Secrets and variables → Actions → New repository secret), then run the workflow. Without the key the site works as before, with no best-app lines.
+
+The free plan has 500 credits a month, and the daily run spends only its share (what's left divided by the days left in the month), cheapest first: college game lines (3 credits a sport for every game), UFC winners, then player props for the games holding the best picks (1 credit per prop type per game). That covers the college games and a couple of pro games a day. A paid plan covers every game on the slate with no change. Optional settings: `ODDS_DAILY_CREDITS` (a fixed daily spend) and `ODDS_REGIONS` (`us,us2` adds more books at twice the cost). Soccer and cricket picks have no book odds yet.
+
 ## AI GM
 
 Both pages have an **Ask the AI GM** panel. It sends everything the page knows (your lineup, bench, values, matchups, position grades, other teams' needs, the model's trade ideas, and pickups) to Claude, which searches the web for the latest injury news and depth charts before answering. On the trade calculator it also gets the trade report, both teams' starting lineups and benches when your league is synced, and each player's rank at his position. Claude thinks the deal through before answering (adaptive thinking) and replies in a set shape: a **Ruling** with a letter grade, **Why** (the reasons, naming players), a **Counter** that would make the deal a win, and the **Risk**. Claude Opus 5.5 is the default; Sonnet 5.5 is faster at about half the cost, and Haiku 5.5 is the cheapest.
