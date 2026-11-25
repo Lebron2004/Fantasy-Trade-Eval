@@ -448,7 +448,7 @@ function teamPanel(sp, code, ng, data){
     el("p", {class:"sub", text:"Up to 10 a side, likeliest first. Tap a name to check it at your book's line."}),
     gameCards([...top.values()].flat().map(c => ({key: sp === "ufc" ? c.pid : c.team, head: sp === "ufc" ? c.name : teamName(sp, c.team), sub: "", p: c.p,
       row: el("li", {}, chancePill(c.p), el("div", {}, el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}),
-        el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:`Hit ${c.l10[0]} of his last ${c.l10[1]}.`}), propBooks(c, sp) || ""))}))));
+        el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:`Hit ${c.l10[0]} of his last ${c.l10[1]}.${marketNote(c)}`}), propBooks(c, sp) || ""))}))));
   return box;
 }
 
@@ -461,6 +461,9 @@ const bookName = k => (odds && odds.books && odds.books[k]) || k;
 // "My apps": the books you can bet on (by state or by account); every book until you pick
 const myBooks = () => { const m = store.get("tradescale:my-books"); return Array.isArray(m) && m.length ? m : null; };
 const usableBook = k => { const m = myBooks(); return !m || m.includes(k); };
+// pick'em apps: real lines, but payouts depend on the entry, so they're listed apart and never ranked by price
+const DFS = new Set(["prizepicks", "underdog", "pick6", "betr_us_dfs"]);
+const DFS_WORDS = {prizepicks:["More","Less"], underdog:["Higher","Lower"], pick6:["More","Less"]};
 const decOdds = a => a == null ? null : a > 0 ? 1 + a / 100 : 1 + 100 / -a;
 const amer = a => a == null ? "–" : a > 0 ? "+" + a : String(a).replace("-", "−");
 const decToAmer = d => d >= 2 ? "+" + Math.round((d - 1) * 100) : String(Math.round(-100 / (d - 1))).replace("-", "−");
@@ -471,7 +474,7 @@ const oddsKey = s => String(s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").t
 // (the model's chance there times the payout), books without a model chance after, by price
 function rankOffers(list){
   const v = o => o.p != null ? o.p * decOdds(o.price) : null;
-  return list.filter(o => o.price != null && usableBook(o.b)).sort((a, b) => {
+  return list.filter(o => o.price != null && usableBook(o.b) && !DFS.has(o.b)).sort((a, b) => {
     const va = v(a), vb = v(b);
     if (va != null && vb != null) return vb - va;
     if (va != null || vb != null) return va != null ? -1 : 1;
@@ -528,8 +531,35 @@ function booksLine(offers, textAt, copyAt, short){
       + (offers.length > 6 ? `, and ${offers.length - 6} more` : "")}) : null);
 }
 function propBooks(c, sp){
-  return booksLine(propOffers(sp, c), line => pickText({...c, line}, sp), line => `${c.name} ${pickText({...c, line}, sp)}`,
+  const books = booksLine(propOffers(sp, c), line => pickText({...c, line}, sp), line => `${c.name} ${pickText({...c, line}, sp)}`,
     line => `${c.side === "under" ? "U" : "O"} ${line}`);
+  const pe = pickemLine(c, sp);
+  return books && pe ? el("div", {}, books, pe) : books || pe;
+}
+// PrizePicks, Underdog and Pick6 lines for a pick, with the chance of the pick's side at each app's own line
+function pickemLine(c, sp){
+  let rows = (c.dfs || []).filter(r => usableBook(r[0]));
+  if (!rows.length && odds && odds.props){
+    const all = ((odds.props[sp] || {})[oddsKey(c.name)] || {})[c.key] || [];
+    rows = all.filter(r => DFS.has(r[0]) && usableBook(r[0])).map(r => [r[0], r[1], r[4] == null ? null : c.side === "under" ? 1 - r[4] : r[4]]);
+  }
+  if (!rows.length) return null;
+  const word = b => (DFS_WORDS[b] || ["Over","Under"])[c.side === "under" ? 1 : 0];
+  rows.sort((a, b) => (b[2] || 0) - (a[2] || 0));
+  const bet = r => pickText({...c, line: r[1]}, sp).replace(/^(Over|Under)/, word(r[0]));
+  const top = rows[0], txt = r => `${bookName(r[0])} ${bet(r)}${r[2] != null ? ` (${pct(r[2])})` : ""}`;
+  return el("div", {class:"books"},
+    el("div", {class:"books-best"}, el("span", {class:"book-tag", text:"Pick'em"}), el("strong", {text:txt(top)}),
+      copyBtn(`${c.name} ${bet(top)}`)),
+    rows.length > 1 ? el("small", {class:"books-rest", text:"Also: " + rows.slice(1).map(r => `${bookName(r[0])} ${r[1]}${r[2] != null ? ` (${pct(r[2])})` : ""}`).join(", ")}) : null);
+}
+// how the pick's chance was set when the books post this prop: their no-vig chance blended with the model's
+function marketNote(c){
+  const m = c.mkt;
+  if (!m) return "";
+  const side = p => c.side === "under" ? 1 - p : p;
+  if (m.pk == null) return ` Line from the pick'em apps; model ${pct(side(m.pm))}.`;
+  return ` Books' line${m.nb ? ` (${m.nb} app${m.nb > 1 ? "s" : ""})` : ""}: books say ${pct(side(m.pk))}, model ${pct(side(m.pm))}.`;
 }
 function gameBooks(d, sp, b){
   return booksLine(gameOffers(d, sp, b), line => betText(d, {...b, line}), line => `${betText(d, {...b, line})} (${matchup(d, b.g)})`,
@@ -740,7 +770,7 @@ function bestPanel(b, sp){
         chancePill(c.p),
         el("div", {}, el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}), sp === "ufc" ? null : el("span", {class:"tag", text:c.team}),
           el("div", {class:"pick-line", text:pickText(c, sp)}),
-          el("small", {text:`${vsAt(c.home)} ${c.opp}, ${shortDate(c.date)}. Hit ${c.l10[0]} of his last ${c.l10[1]}.${why ? ` Helped most by ${why}.` : ""}`}),
+          el("small", {text:`${vsAt(c.home)} ${c.opp}, ${shortDate(c.date)}. Hit ${c.l10[0]} of his last ${c.l10[1]}.${marketNote(c)}${why ? ` Helped most by ${why}.` : ""}`}),
           propBooks(c, sp) || "")));
     });
     return ul;
@@ -752,7 +782,7 @@ function bestPanel(b, sp){
       el("p", {class:"sub", text:`Every top pick and best over, one card a ${unit}, the ${unit} with the likeliest pick first. Tap a name to check it at your book's line.`}),
       gameCards(all.map(c => ({key: `${c.date}|${sp === "ufc" ? [c.name, c.opp].sort() : [c.team, c.opp].sort()}`, head: head(c), sub: shortDate(c.date), p: c.p,
         row: el("li", {}, chancePill(c.p), el("div", {}, el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}),
-          el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:`Hit ${c.l10[0]} of his last ${c.l10[1]}.`}), propBooks(c, sp) || ""))}))));
+          el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:`Hit ${c.l10[0]} of his last ${c.l10[1]}.${marketNote(c)}`}), propBooks(c, sp) || ""))}))));
     return box;
   }
   box.append(pickHead("Most likely to hit", redraw), pickList(picks));

@@ -13,10 +13,20 @@ team's next game (not just the next slate), so the page can build the likeliest 
 Sports whose model didn't ship today (it didn't beat the formula, or there are
 no upcoming games) are listed with a note and no picks.
 
+Real lines: when site/data/props/odds.json is from today (update_odds.py, which reads DraftKings, FanDuel, BetMGM,
+Caesars, Fanatics and the other books, plus PrizePicks, Underdog and Pick6), a prop the books post is picked at the
+books' consensus line instead of the stand-in, and its chance blends the model with the books' no-vig chance (see
+blend). The daily run calls this script twice: once to choose which games to price, then again after update_odds.py
+so the picks are made at the posted lines. The blend's weight is tuned by analytics.py on graded picks.
+
 Run after train_props_model.py. Standard library only.
 """
-import itertools, json, os, unicodedata
+import itertools, json, math, os, sys, unicodedata
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from update_odds import MARKET as ODDS_MARKETS, model_over, norm as odds_norm   # the same name key and line pricing the odds file uses
 
 try:
     from zoneinfo import ZoneInfo
@@ -58,6 +68,76 @@ LEG_POOL = 60     # the page builds parlays of any size from this many of the st
 DAY_WINDOW = 7    # days the page's day picker reaches past the first day with games
 MAX_DAYS = 8
 NFL_TEAM = {"LAR": "LA", "JAC": "JAX", "WSH": "WAS"}   # Sleeper vs nflverse team codes
+# pick'em apps: their lines are real but their prices are indicative (payouts depend on the entry), so they set
+# a line when no sportsbook has one, and never the market's chance
+DFS_BOOKS = {"prizepicks", "underdog", "pick6", "betr_us_dfs"}
+# the model's share of the blend (in log-odds; the books' no-vig chance gets the rest) until analytics.py has
+# graded enough market-checked picks to tune it. Books' prop lines are sharp, so the market leads.
+MODEL_WEIGHT = 0.4
+MIN_TUNED = 60
+ODDS_MAX_AGE_H = 30
+
+
+# ---------- sportsbook and pick'em lines ----------
+def implied(a):
+    if a is None:
+        return None
+    return -a / (-a + 100) if a < 0 else 100 / (a + 100)
+
+
+def logit(p):
+    p = min(max(p, 0.01), 0.99)
+    return math.log(p / (1 - p))
+
+
+def blend(pm, pk, w):
+    """The model's and the market's chance of the over, averaged in log-odds with the model's weight w."""
+    if pk is None:
+        return pm
+    if pm is None:
+        return pk
+    return 1 / (1 + math.exp(-(w * logit(pm) + (1 - w) * logit(pk))))
+
+
+def load_market():
+    """Today's odds file and the tuned blend weights, or ({}, {}) when there's no fresh odds file."""
+    try:
+        odds = json.load(open(os.path.join(PROPS, "odds.json"), encoding="utf-8"))
+        age = datetime.now(timezone.utc) - datetime.fromisoformat(odds["updated"])
+        if age > timedelta(hours=ODDS_MAX_AGE_H) or not odds.get("props"):
+            return {}, {}
+    except Exception:
+        return {}, {}
+    weights = {}
+    try:
+        tuned = json.load(open(os.path.join(DATA, "analytics.json"), encoding="utf-8")).get("market") or {}
+    except Exception:
+        tuned = {}
+    for sport in odds["props"]:
+        t = tuned.get(sport) if (tuned.get(sport) or {}).get("n", 0) >= MIN_TUNED else tuned.get("all")
+        weights[sport] = t["w"] if t and t.get("n", 0) >= MIN_TUNED and t.get("w") is not None else MODEL_WEIGHT
+    return odds, weights
+
+
+def market_line(rows):
+    """One prop's rows from the odds file -> the consensus line, the books' no-vig chance of the over there (None if no
+    book prices both sides of it), how many books post it, and the pick'em apps' lines."""
+    books = [r for r in rows if r[0] not in DFS_BOOKS]
+    dfs = [r for r in rows if r[0] in DFS_BOOKS]
+    lines = [r[1] for r in books] or [r[1] for r in dfs]
+    if not lines:
+        return None
+    cnt = Counter(lines)
+    top = max(cnt.values())
+    tied = sorted(l for l in cnt if cnt[l] == top)
+    line = tied[len(tied) // 2]
+    fair = []
+    for r in books:
+        o, u = implied(r[2]), implied(r[3])
+        if r[1] == line and o and u:
+            fair.append(o / (o + u))
+    return {"line": line, "pk": sum(fair) / len(fair) if fair else None, "nb": len({r[0] for r in books if r[1] == line}),
+            "dfs": [(r[0], r[1]) for r in dfs]}
 
 
 def norm(s):
@@ -125,6 +205,9 @@ def build_sport(sport):
         out["note"] = "The trained model didn't ship for this sport today, so there are no picks."
         return out
     hurt = injured(sport)
+    # player props only (UFC's odds rows are fight winners, which the stand-in already prices at the bout)
+    mkt_props = ((MARKET_ODDS.get("props") or {}).get(sport) or {}) if sport in ODDS_MARKETS else {}
+    w = MARKET_W.get(sport, MODEL_WEIGHT)
     starters = {g.get("opp_sp") for g in upcoming.values() if g.get("opp_sp")}   # MLB probable pitchers
     markets, skip = MARKETS[sport], SKIP_GROUPS.get(sport, set())
     docs = []
@@ -169,10 +252,28 @@ def build_sport(sport):
             vals = [stat_of(g, key) for g in log]
             if len(vals) < 5:
                 continue
-            line, p_over = book_line(entry, vals)
-            # a book posts this prop only for a player whose current role reaches it (not a backup QB's completions)
-            if line < markets[key] or sum(vals[-5:]) / len(vals[-5:]) < markets[key]:
-                continue
+            rows = (mkt_props.get(odds_norm(doc["name"])) or {}).get(key)
+            mk = market_line(rows) if rows else None
+            pm = model_over(doc, sport, key, mk["line"]) if mk else None
+            if pm is None:
+                mk = None
+                line, p_over = book_line(entry, vals)
+                # a book posts this prop only for a player whose current role reaches it (not a backup QB's completions)
+                if line < markets[key] or sum(vals[-5:]) / len(vals[-5:]) < markets[key]:
+                    continue
+                if mkt_props:
+                    # other props on this slate are priced against real lines; a stand-in line is where a book would
+                    # set it (about even), so pull its chance the same way, or unchecked picks would crowd out checked ones
+                    p_over = blend(p_over, 0.5, w)
+            else:      # a posted line: pick at it, with the model and the books' chance blended (a pick'em-only line
+                       # has no real price, but it's set where the app expects an even split)
+                base = mk["pk"] if mk["pk"] is not None else 0.5
+                line, p_over = mk["line"], blend(pm, base, w)
+                for r in rows:          # every app's line in the odds file gets the same blended chance
+                    pr = model_over(doc, sport, key, r[1])
+                    if pr is not None:
+                        shift = min(0.98, max(0.02, base + pr - pm))
+                        r[4] = round(blend(pr, shift, w), 4)
             side, p = ("over", p_over) if p_over >= 0.5 else ("under", 1 - p_over)
             if sport == "ufc" and key == "win" and side == "under":
                 continue      # "doesn't win" is the opponent's win, which his own page already offers
@@ -184,6 +285,19 @@ def build_sport(sport):
             mine.append({"pid": doc["id"], "name": doc["name"], "team": doc["team"], "grp": grp, "opp": ng["opp"],
                          "home": ng.get("home"), "date": ng["date"], "time": ng.get("time"), "key": key, "line": line,
                          "side": side, "p": round(p, 3), "l10": [hits, len(last10)], "why": why})
+            if mk:     # pm/pk: the model's and the books' chance of the over at this line (pk null: pick'em line only)
+                mine[-1]["mkt"] = {"pm": round(pm, 3), "pk": None if mk["pk"] is None else round(mk["pk"], 3),
+                                   "nb": mk["nb"], "w": round(w, 2)}
+                pe = []
+                for b, l in mk["dfs"]:
+                    pr = model_over(doc, sport, key, l)
+                    if pr is None:
+                        continue
+                    shift = min(0.98, max(0.02, base + pr - pm))
+                    po = blend(pr, shift, w)
+                    pe.append([b, l, round(po if side == "over" else 1 - po, 3)])
+                if pe:
+                    mine[-1]["dfs"] = pe
         every.extend(mine)          # every prop he has, for the same-game parlays
         if mine:   # every upcoming player, so the page can show any day, not just the next slate
             cands.append(max(mine, key=lambda c: c["p"]))     # his single most likely prop
@@ -279,14 +393,23 @@ def write_sgp(sport, upcoming, every):
         if k in seen:
             continue
         seen.add(k)
-        games[key]["legs"].append({f: c[f] for f in ("pid", "name", "team", "grp", "key", "line", "side", "p", "l10", "opp", "home", "date")})
+        games[key]["legs"].append({f: c[f] for f in ("pid", "name", "team", "grp", "key", "line", "side", "p", "l10", "opp", "home", "date",
+                                                     "mkt", "dfs") if f in c})
     out = {"updated": datetime.now(timezone.utc).isoformat(timespec="minutes"), "teams": teams, "games": games}
     with open(os.path.join(PROPS, sport, "sgp.json"), "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
     print(f"same-game {sport}: {len(games)} games, {sum(len(g['legs']) for g in games.values())} legs")
 
 
+MARKET_ODDS, MARKET_W = {}, {}
+
+
 def main():
+    global MARKET_ODDS, MARKET_W
+    MARKET_ODDS, MARKET_W = load_market()
+    if MARKET_ODDS:
+        print(f"best bets: picking at posted lines from {MARKET_ODDS.get('source')} ({len(MARKET_ODDS.get('books') or {})} apps), "
+              f"model weight {', '.join(f'{k} {v:.2f}' for k, v in MARKET_W.items())}")
     result = {"updated": datetime.now(timezone.utc).isoformat(timespec="minutes"), "date": TODAY.isoformat(), "sports": {}}
     for sport in ("nfl", "nba", "nhl", "mlb", "ufc", "soc", "cri"):
         try:
@@ -304,6 +427,11 @@ def main():
     os.makedirs(PROPS, exist_ok=True)
     with open(os.path.join(PROPS, "best.json"), "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, separators=(",", ":"))
+    if MARKET_ODDS:      # the page's best-app chances now carry the blend too
+        result_market = sum(1 for s in result["sports"].values() for c in s.get("picks", []) if c.get("mkt"))
+        print(f"best bets: {result_market} top picks made at posted lines")
+        with open(os.path.join(PROPS, "odds.json"), "w", encoding="utf-8") as f:
+            json.dump(MARKET_ODDS, f, ensure_ascii=False, separators=(",", ":"))
 
 
 if __name__ == "__main__":

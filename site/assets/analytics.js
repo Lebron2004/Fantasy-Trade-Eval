@@ -292,6 +292,7 @@ function overview(){
   }).filter(Boolean).sort((a, b) => b.rate - a.rate);
   if (sharp.length) app.append(panel("Where the models are sharpest", "On held-out games, how often each sport's model was right when it gave a side 60% or better.",
     el("div", {class:"an-bars"}, ...sharp.map(r => bullet(NAME[r.sp], r.rate, BREAK_EVEN, `${pct1(r.rate)} of ${r.n.toLocaleString()}`, "Tick: 52.4%, break-even at -110")))));
+  if ((A.market || {}).all) app.append(booksCard("all"));
   app.append(gamesPanel("all"));
 }
 /* ---------- one sport ---------- */
@@ -341,6 +342,20 @@ function collegeCard(sp){
     el("p", {class:"why", text:"Rating: points better than an average team on a neutral field."}));
   return box;
 }
+// picks made at a sportsbook's posted line: how the model, the books' no-vig chance and their blend scored once graded
+function booksCard(sp){
+  const m = (A.market || {})[sp];
+  const box = panel("Model vs the books", "Props the books post are picked at their consensus line, and each pick's chance blends the trained model with the books' no-vig chance (PrizePicks, Underdog and Pick6 lines are shown too, but their prices aren't real odds, so they don't count here). Lower log loss is better.");
+  if (!m || !m.n){ box.append(el("p", {class:"empty", style:"margin:0", text:"No graded picks at posted lines yet. This fills in once picks made at the books' lines have been played."})); return box; }
+  const gain = (a, b) => `${signed((1 - a / b) * 100, 1)}%`;
+  box.append(el("div", {class:"tiles"},
+    tile("Graded picks", m.n.toLocaleString(), "made at a book's line"),
+    tile("Blend vs model alone", gain(m.blend, m.model), "less prediction error", m.blend < m.model ? "good" : "bad"),
+    tile("Blend vs books alone", gain(m.blend, m.market), "less prediction error", m.blend < m.market ? "good" : ""),
+    tile("Model's weight", `${Math.round(m.w * 100)}%`, m.n >= 60 ? "tuned on these picks, books get the rest" : "picks use 40% until 60 are graded")),
+    table(["", "Log loss", "Right side"], [["Model alone", m.model.toFixed(3), pct1(m.hit_model)], ["Books alone", m.market.toFixed(3), pct1(m.hit_market)], ["Blend", m.blend.toFixed(3), "–"]]));
+  return box;
+}
 async function marketCard(sp){
   const box = panel("Trade market", "Where the trained model and trade values disagree most: buys are players the model ranks above their trade value at their position, sells the other way.");
   let sig, pool;
@@ -368,6 +383,7 @@ async function sportView(sp){
   if (t) app.append(panel(COLLEGE.includes(sp) ? "By bet type" : "By prop", "Which kinds of picks have paid off in this window.", t));
   app.append(gamesPanel(sp));
   app.append(COLLEGE.includes(sp) ? collegeCard(sp) : modelCard(sp));
+  if (["nfl","nba","nhl","mlb"].includes(sp)) app.append(booksCard(sp));
   if (FANTASY.includes(sp)){ const box = await marketCard(sp); if (sport === sp) app.append(box); }
 }
 

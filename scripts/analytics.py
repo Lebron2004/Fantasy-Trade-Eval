@@ -19,6 +19,10 @@ Writes site/data/analytics.json (committed, unlike the props data, so the histor
    "parlays": [[id, sport, date, p, [pick ids], result], ...], "models": {sport: {...}}, "college": {sport: {...}}}
   kind     "prop" or a college market: "ml", "spread", "total"
   result   null (not played yet), "W", "L", "P" (push) or "V" (void)
+  A 14th field, when the pick was made at a sportsbook's posted line: {"pm": model's chance of the over, "pk": the
+  books' no-vig chance of the over (null for a pick'em-only line), "nb": books posting it, "w": the model's weight}.
+  "market": {sport or "all": {"n", "model", "market", "blend", "w", "hit_model", "hit_market"}}: log loss of the model
+  alone, the books alone and the best blend on graded market-checked picks; best_bets.py uses "w" once n is big enough.
 
 Standard library only. Run: python scripts/analytics.py
 """
@@ -77,7 +81,8 @@ def prop_picks(sport, s):
             if leg in by_leg:
                 continue
             by_leg[leg] = pid = f"{sport}:{leg}:{c['date']}"
-            rows.append([pid, sport, c["date"], kind, c["name"], c.get("team"), c.get("opp"), c["key"], c["line"], c["side"], c["p"], None, None])
+            rows.append([pid, sport, c["date"], kind, c["name"], c.get("team"), c.get("opp"), c["key"], c["line"], c["side"], c["p"], None, None]
+                        + ([c["mkt"]] if c.get("mkt") else []))
     parlays = []
     for pl in s.get("parlays") or []:
         legs = [by_leg.get(l) for l in pl["legs"]]
@@ -271,6 +276,36 @@ def grade_parlays(hist):
             p[5] = "V" if all(x in ("V", "P") for x in legs) else "W"   # a void or push leg drops out, as at a book
 
 
+# ---------------------------------------------------------------- model vs the books
+def tune_market(hist):
+    """On graded picks made at a book's posted line, how well the model, the books' no-vig chance and their blend
+    predicted the over, and the model weight that would have scored best (best_bets.py blends with it)."""
+    rows = [r for r in hist["picks"] if len(r) > 13 and r[13] and r[13].get("pk") is not None and r[13].get("pm") is not None
+            and r[11] in ("W", "L")]
+    out = {}
+    lg = lambda p: math.log(min(max(p, 0.01), 0.99) / (1 - min(max(p, 0.01), 0.99)))
+    def score(sub):
+        ys = [1 if (r[11] == "W") == (r[9] == "over") else 0 for r in sub]
+        pm = [r[13]["pm"] for r in sub]
+        pk = [r[13]["pk"] for r in sub]
+        def ll(ps):
+            return -sum(math.log(min(max(p if y else 1 - p, 1e-4), 1)) for p, y in zip(ps, ys)) / len(ys)
+        def mix(w):
+            return [1 / (1 + math.exp(-(w * lg(a) + (1 - w) * lg(b)))) for a, b in zip(pm, pk)]
+        grid = [i / 20 for i in range(21)]
+        best_w = min(grid, key=lambda w: ll(mix(w)))
+        hit = lambda ps: sum((p >= 0.5) == bool(y) for p, y in zip(ps, ys)) / len(ys)
+        return {"n": len(sub), "model": round(ll(pm), 4), "market": round(ll(pk), 4), "blend": round(ll(mix(best_w)), 4),
+                "w": best_w, "hit_model": round(hit(pm), 3), "hit_market": round(hit(pk), 3)}
+    if rows:
+        out["all"] = score(rows)
+    for sport in PROP_SPORTS:
+        sub = [r for r in rows if r[1] == sport]
+        if sub:
+            out[sport] = score(sub)
+    hist["market"] = out
+
+
 # ---------------------------------------------------------------- model report cards
 def model_card(m):
     r = m.get("report") or {}
@@ -320,6 +355,7 @@ def main():
         if d.get("date") == iso(TODAY):
             record(hist, sport, college_picks(sport, d))
     grade_parlays(hist)
+    tune_market(hist)
 
     cutoff = iso(TODAY - timedelta(days=KEEP_DAYS))
     hist["picks"] = sorted((r for r in hist["picks"] if r[2] >= cutoff), key=lambda r: (r[2], r[1], -r[10]))
@@ -335,6 +371,9 @@ def main():
         w = sum(r[11] == "W" for r in mine); l = sum(r[11] == "L" for r in mine)
         pend = sum(r[11] is None for r in mine)
         print(f"analytics {sport}: {len(mine)} picks tracked, {w}-{l} graded" + (f" ({w / (w + l):.1%})" if w + l else "") + f", {pend} pending")
+    for k, m in (hist.get("market") or {}).items():
+        print(f"analytics market {k}: {m['n']} graded picks at posted lines, log loss model {m['model']}, books {m['market']}, "
+              f"blend {m['blend']} at model weight {m['w']}")
 
 
 if __name__ == "__main__":

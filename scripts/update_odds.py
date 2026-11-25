@@ -6,11 +6,16 @@ ESPN BET, BetRivers, Fanatics and more), so the page can say which app has the b
 Needs a free key from https://the-odds-api.com saved as the repository secret ODDS_API_KEY. Without one it writes
 nothing and the page simply leaves the "best app" lines out.
 
-What it pulls, cheapest and most useful first, until the day's share of the plan's credits is spent:
-  1. College football and basketball game lines (moneyline, spread, total): one call per sport covers every game.
-  2. UFC fight winners (one call covers the card).
-  3. Player props for the games holding the day's best picks, parlay legs and same-game parlay legs, best games first.
-     Each game costs one credit per market, so only the markets the picks use are asked for.
+Player props come from the sportsbooks (region "us") and the pick'em apps PrizePicks, Underdog and DraftKings Pick6
+(region "us_dfs"). best_bets.py runs again after this script and picks each priced prop at the books' consensus line,
+blending the model's chance with the books' no-vig chance, so these lines feed the picks themselves, not just the
+"best app" display. Fanatics comes with the "us" region on paid plans only.
+
+What it pulls, most useful first, until the day's share of the plan's credits is spent:
+  1. Player props for the games holding the day's best picks, parlay legs and same-game parlay legs, best games first.
+     Each game costs one credit per market per region, so only the markets the picks use are asked for.
+  2. College football and basketball game lines (moneyline, spread, total): one call per sport covers every game.
+  3. UFC fight winners (one call covers the card).
 The free plan has 500 credits a month. The daily share is what's left divided by the days left in the month (or
 ODDS_DAILY_CREDITS if set), so it never runs dry halfway through the month. A paid plan simply covers more games.
 
@@ -30,6 +35,8 @@ PROPS = os.path.join(DATA, "props")
 API = "https://api.the-odds-api.com/v4/sports/"
 KEY = os.environ.get("ODDS_API_KEY", "").strip()
 REGIONS = os.environ.get("ODDS_REGIONS") or "us"          # "us,us2" adds Hard Rock, ESPN BET and others (twice the credits)
+# props also ask the pick'em apps (PrizePicks, Underdog, Pick6); each region is charged per market
+PROP_REGIONS = os.environ.get("ODDS_PROP_REGIONS") or "us,us_dfs"
 
 SPORT_KEY = {"nfl": "americanfootball_nfl", "nba": "basketball_nba", "nhl": "icehockey_nhl", "mlb": "baseball_mlb",
              "cfb": "americanfootball_ncaaf", "cbb": "basketball_ncaab", "ufc": "mma_mixed_martial_arts"}
@@ -377,12 +384,6 @@ def main():
     best = load(os.path.join(PROPS, "best.json"))
     teams = slip_teams()
     books, props, games = {}, {}, {}
-    for job in (lambda: college_lines("cfb", books, games), lambda: college_lines("cbb", books, games),
-                lambda: ufc_winners(best, books, props)):
-        try:
-            job()
-        except Exception as e:
-            print(f"odds: game lines step skipped ({str(e)[:120]})")
     plans = []
     for sport in ("nfl", "nba", "nhl", "mlb"):
         try:
@@ -393,14 +394,18 @@ def main():
     # take turns across sports so every sport's best game gets priced before any sport's second game
     queue = [p for rnd in range(EVENTS_PER_SPORT) for pl in plans if rnd < len(pl) for p in [pl[rnd]]]
     docs, priced = {}, 0
-    nreg = len(REGIONS.split(","))
+    nreg = len(PROP_REGIONS.split(","))
+    # keep enough of today's credits for the college game lines and UFC winners that run after the props
+    greg = len(REGIONS.split(","))
+    reserve = sum(3 * greg for sp in ("cfb", "cbb") if (load(os.path.join(PROPS, sp, "games.json")) or {}).get("games"))
+    reserve += greg if ((best or {}).get("sports", {}).get("ufc") or {}).get("picks") else 0
     for sport, e, mk in queue:
         if BUDGET.left is not None:
-            mk = mk[:max(0, BUDGET.left // nreg)]
+            mk = mk[:max(0, (BUDGET.left - reserve) // nreg)]
         if not mk:
             break
         try:
-            ev = get(f"{SPORT_KEY[sport]}/events/{e['id']}/odds", cost=len(mk) * nreg, regions=REGIONS,
+            ev = get(f"{SPORT_KEY[sport]}/events/{e['id']}/odds", cost=len(mk) * nreg, regions=PROP_REGIONS,
                      markets=",".join(mk), oddsFormat="american", includeLinks="true")
         except Exception as ex:
             print(f"odds {sport}: {e.get('away_team')} at {e.get('home_team')} skipped ({str(ex)[:100]})")
@@ -410,7 +415,14 @@ def main():
         read_props(sport, ev, docs[sport], books, props)
         priced += 1
         print(f"odds {sport}: {e.get('away_team')} at {e.get('home_team')}, {len(mk)} markets, {len(ev.get('bookmakers', []))} books")
+    for job in (lambda: college_lines("cfb", books, games), lambda: college_lines("cbb", books, games),
+                lambda: ufc_winners(best, books, props)):
+        try:
+            job()
+        except Exception as e:
+            print(f"odds: game lines step skipped ({str(e)[:120]})")
     out = {"updated": datetime.now(timezone.utc).isoformat(timespec="minutes"), "source": "The Odds API", "regions": REGIONS,
+           "prop_regions": PROP_REGIONS,
            "credits": {"used": BUDGET.used, "remaining": BUDGET.remaining}, "games_priced": priced,
            "books": books, "props": props, "games": games}
     os.makedirs(PROPS, exist_ok=True)

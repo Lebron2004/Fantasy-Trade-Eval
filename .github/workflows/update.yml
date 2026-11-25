@@ -70,7 +70,7 @@ jobs:
         continue-on-error: true
         run: python scripts/trade_signals.py
 
-      - name: Pick the day's best bets and parlays
+      - name: Pick the day's best bets and parlays (first pass, chooses which games to price)
         continue-on-error: true
         run: python scripts/best_bets.py
 
@@ -81,6 +81,12 @@ jobs:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           ODDS_DAILY_CREDITS: ${{ vars.ODDS_DAILY_CREDITS }}
           ODDS_REGIONS: ${{ vars.ODDS_REGIONS }}
+          ODDS_PROP_REGIONS: ${{ vars.ODDS_PROP_REGIONS }}
+
+      # with today's sportsbook and PrizePicks lines in hand, pick again at the posted lines (model blended with the books)
+      - name: Re-pick the best bets at the books' real lines
+        continue-on-error: true
+        run: python scripts/best_bets.py
 
       - name: Grade past picks and update the analytics track record
         continue-on-error: true
