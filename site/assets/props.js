@@ -603,15 +603,24 @@ function legPicker(max, redraw){
 }
 // the likeliest parlays of k legs, one leg per game: each game's likeliest pick, best games first.
 // Later parlays share no player with earlier ones. cands carry .p; gameOf and whoOf give a pick's game and person.
-function buildParlays(cands, k, n, gameOf, whoOf = () => null){
+// fits(c, legs), when given, lets a parlay with more legs than games fill up with the next likeliest picks from
+// games already in it (a different player each), as long as fits says the pick goes with the legs so far.
+function buildParlays(cands, k, n, gameOf, whoOf = () => null, fits = null){
   const out = [], used = new Set();
   for (let i = 0; i < n; i++){
+    const free = cands.filter(c => { const who = whoOf(c); return who == null || !used.has(who); });
     const byGame = new Map();
-    for (const c of cands){
-      const who = whoOf(c); if (who != null && used.has(who)) continue;
-      const g = gameOf(c), cur = byGame.get(g); if (!cur || c.p > cur.p) byGame.set(g, c);
-    }
+    for (const c of free){ const g = gameOf(c), cur = byGame.get(g); if (!cur || c.p > cur.p) byGame.set(g, c); }
     const legs = [...byGame.values()].sort((a, b) => b.p - a.p).slice(0, k);
+    if (legs.length < k && fits){
+      const who = new Set(legs.map(whoOf).filter(w => w != null));
+      for (const c of [...free].sort((a, b) => b.p - a.p)){
+        if (legs.length >= k) break;
+        const w = whoOf(c);
+        if (legs.includes(c) || (w != null && who.has(w)) || !fits(c, legs)) continue;
+        legs.push(c); if (w != null) who.add(w);
+      }
+    }
     if (legs.length < k) break;
     legs.forEach(c => { const who = whoOf(c); if (who != null) used.add(who); });
     out.push({p: legs.reduce((x, c) => x * c.p, 1), legs});
@@ -619,6 +628,30 @@ function buildParlays(cands, k, n, gameOf, whoOf = () => null){
   return out;
 }
 const gamesIn = (cands, gameOf) => new Set(cands.map(gameOf)).size;
+const sharesGame = (legs, gameOf) => gamesIn(legs, gameOf) < legs.length;
+
+/* ---------- Day picker: bet one day or several at once ---------- */
+const localISO = (t = new Date()) => `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+function dayName(iso){
+  if (iso === localISO()) return "Today";
+  if (iso === localISO(new Date(Date.now() + 864e5))) return "Tomorrow";
+  return new Date(iso + "T12:00:00").toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric"});
+}
+const daySel = {};   // sport -> the days you picked this visit (the next slate until you pick)
+const chosenDays = (sp, dates, def) => { const s = (daySel[sp] || []).filter(d => dates.includes(d)); return s.length ? s : def; };
+// days: [{date, games}]; tapping a day adds or removes it, "All" picks every day
+function dayPicker(sp, days, chosen, redraw, unit = "game"){
+  if (days.length < 2) return null;
+  const all = chosen.length === days.length;
+  const toggle = d => { const s = chosen.includes(d) ? chosen.filter(x => x !== d) : [...chosen, d]; if (!s.length) return; daySel[sp] = s; redraw(); };
+  return el("div", {class:"days-pick"},
+    el("div", {class:"days", role:"group", "aria-label":"Days to bet"},
+      ...days.map(x => el("button", {class:"day", "aria-pressed": String(chosen.includes(x.date)), onclick: () => toggle(x.date)},
+        el("strong", {text:dayName(x.date)}), el("small", {text:`${x.games} ${unit}${x.games === 1 ? "" : "s"}`}))),
+      el("button", {class:"day", "aria-pressed": String(all), onclick: () => { daySel[sp] = all ? [days[0].date] : days.map(x => x.date); redraw(); }},
+        el("strong", {text:"All"}), el("small", {text:`${days.length} days`}))),
+    el("small", {class:"sub", text:"Tap the days you want to bet. Pick more than one to mix them in the same parlays."}));
+}
 const slateName = b => !/^\d{4}-/.test(b.slate || "") ? (b.slate || "the next slate") : b.slate === bestDate ? "today"
   : new Date(b.slate + "T12:00:00").toLocaleDateString(undefined, {weekday:"long", month:"short", day:"numeric"});
 function pickText(c, sp = sport){ return withSport(sp, () => sideText(c.key, c.line, c.side)); }
@@ -652,24 +685,38 @@ function gameCards(items){
 function bestPanel(b, sp){
   const box = el("section", {class:"panel best"});
   const redraw = () => box.replaceWith(bestPanel(b, sp));
-  box.append(el("h2", {text:`Best bets for ${slateName(b)}`}), appsPicker(redraw) || "");
-  if (!b.picks.length){ box.append(el("p", {class:"empty", style:"margin:0", text: b.note || "No picks for this slate yet."})); return box; }
   const unit = sp === "ufc" ? "fight" : "game";
+  // the days you picked (the next slate to start: today's games, or the whole NFL week) and their picks
+  const days = b.days || [];
+  const def = days.filter(x => x.slate).map(x => x.date);
+  const chosen = days.length ? chosenDays(sp, days.map(x => x.date), def.length ? def : [days[0].date]) : [];
+  const on = days.filter(x => chosen.includes(x.date)), byP = (x, y) => y.p - x.p;
+  const v = on.length ? {picks: on.flatMap(x => x.picks).sort(byP), overs: on.flatMap(x => x.overs).sort(byP).slice(0, 6), games: on.reduce((n, x) => n + x.games, 0)} : null;
+  const picks = v ? v.picks.slice(0, 12) : b.picks, overs = v ? v.overs : (b.overs || []), nGames = v ? v.games : b.games;
+  const isDef = !v || (chosen.length === def.length && chosen.every(d => def.includes(d)));
+  const title = isDef && !/^\d{4}-/.test(b.slate || "") ? slateName(b) : !v ? slateName(b) : on.length > 3 ? `${on.length} days` : on.map(x => dayName(x.date)).join(" + ");
+  box.append(el("h2", {text:`Best bets: ${title}`}), dayPicker(sp, days, chosen, redraw, unit) || "", appsPicker(redraw) || "");
+  if (v && on.some(x => x.date !== days[0].date) && sp !== "nfl")
+    box.append(el("p", {class:"sub", text:"Later days list only teams that don't play before then, since the model prices each team's next game. The rest show up once their earlier game is played."}));
+  if (!picks.length){ box.append(el("p", {class:"empty", style:"margin:0", text: v ? "No picks for these days yet." : b.note || "No picks for this slate yet."})); return box; }
   const basis = sp === "ufc" ? "his last 10 fights" : "his last 10 games";
   const fresh = sp === "ufc" ? "Rebuilt every morning with the latest results and the next card."
     : sp === "soc" || sp === "cri" ? "Rebuilt every morning with the latest results; players left out of their team's recent matches are skipped, since injury news and lineups aren't in the free data."
     : "Rebuilt every morning with the latest results and injury tags; injured players are left out.";
-  box.append(el("p", {class:"sub", text:`The trained model's most likely props across ${b.games} ${unit}${b.games === 1 ? "" : "s"}, each at the line nearest his average over ${basis}. ${odds && odds.props && odds.props[sp] ? "Where the apps have posted the prop, the best app shows under it (best payout for the model's chance at that app's own line), with every other app that lists him." : "Your book's line may differ, so tap a pick to check it at that line."} ${fresh}`}));
+  box.append(el("p", {class:"sub", text:`The trained model's most likely props across ${nGames} ${unit}${nGames === 1 ? "" : "s"}, each at the line nearest his average over ${basis}. ${odds && odds.props && odds.props[sp] ? "Where the apps have posted the prop, the best app shows under it (best payout for the model's chance at that app's own line), with every other app that lists him." : "Your book's line may differ, so tap a pick to check it at that line."} ${fresh}`}));
   const byId = new Map([...b.picks, ...(b.extra || [])].map(c => [c.pid + ":" + c.key, c]));
-  // build the parlays here at the chosen size, from the deeper pool when this morning's data has one
-  const pool = (b.pool || [...b.picks.map(c => c.pid + ":" + c.key), ...(b.extra || []).map(c => c.pid + ":" + c.key)]).map(k => byId.get(k)).filter(Boolean);
+  // build the parlays here at the chosen size, from the chosen days' picks (or the older one-slate pool)
+  const pool = v ? v.picks : (b.pool || [...b.picks.map(c => c.pid + ":" + c.key), ...(b.extra || []).map(c => c.pid + ":" + c.key)]).map(k => byId.get(k)).filter(Boolean);
   const gameOf = c => [c.team, c.opp].sort().join("-") + c.date;
-  const maxLegs = gamesIn(pool, gameOf);
-  const parlays = buildParlays(pool, Math.min(parlayLegs, maxLegs), 3, gameOf, c => c.pid);
+  // one leg per game first; past the number of games, more players from the same games (never both fighters to win)
+  const games = gamesIn(pool, gameOf), maxLegs = Math.min(MAX_LEGS, new Set(pool.map(c => c.pid)).size);
+  const fits = (c, legs) => !(c.key === "win" && legs.some(l => l.key === "win" && gameOf(l) === gameOf(c)));
+  const parlays = buildParlays(pool, Math.min(parlayLegs, maxLegs), 3, gameOf, c => c.pid, fits);
   if (maxLegs >= 2 && parlays.length){
     const k = parlays[0].legs.length;
     box.append(el("div", {class:"bar-row pick-head"}, el("h3", {text:`${k}-leg parlays`}), legPicker(maxLegs, redraw)));
-    if (parlayLegs > maxLegs) box.append(el("p", {class:"sub", text:`This slate has ${maxLegs} ${unit}s with a pick, so ${maxLegs} legs is the most at one leg per ${unit}.`}));
+    if (k > games) box.append(el("p", {class:"sub", text:`${games === 1 ? "There's 1 " + unit : "There are " + games + " " + unit + "s"} with a pick on ${on.length > 1 ? "these days" : "this day"}, so some legs share a ${unit}. Legs in the same ${unit} move together (a blowout or a slow pace can sink several at once), so the real chance can land a bit off the one shown.${days.length > on.length ? ` Add a day above for one leg per ${unit}.` : ""}`}));
+    if (parlayLegs > maxLegs) box.append(el("p", {class:"sub", text:`The model has ${maxLegs} players it can pick from on ${on.length > 1 ? "these days" : "this slate"}, so ${maxLegs} legs is the most.`}));
     const grid = el("div", {class:"parlays"});
     parlays.forEach((pl, i) => {
       const legs = pl.legs;
@@ -679,12 +726,12 @@ function bestPanel(b, sp){
           el("button", {class:"linkish", text:c.name, onclick: () => openPick(c)}),
           el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:` ${vsAt(c.home)} ${c.opp}, ${pct(c.p)}`})))),
         parlayBooks(propLegs(legs, sp), false) || "",
-        el("div", {class:"parlay-foot"}, el("small", {text:`Fair odds ${toAmerican(pl.p)}. One leg per ${sp === "ufc" ? "fight" : "game"}, so the legs don't lean on each other.`}),
+        el("div", {class:"parlay-foot"}, el("small", {text:`Fair odds ${toAmerican(pl.p)}. ${sharesGame(legs, gameOf) ? `Some legs share a ${unit}, so they lean on each other a little.` : `One leg per ${unit}, so the legs don't lean on each other.`}`}),
           el("button", {class:"btn tiny", text:"Check in slip", onclick: () => checkParlay(legs, sp)})));
       grid.append(card);
     });
     box.append(grid);
-  } else box.append(el("p", {class:"sub", text: maxLegs < 2 ? `Not enough ${unit}s on this slate for a parlay with one leg per ${unit}.` : b.note || "No parlays for this slate."}));
+  } else box.append(el("p", {class:"sub", text: maxLegs < 2 ? `Not enough picks on ${on.length > 1 ? "these days" : "this slate"} for a parlay.` : "No parlays for this slate."}));
   const pickList = list => {
     const ul = el("ol", {class:"picks"});
     list.forEach(c => {
@@ -699,7 +746,7 @@ function bestPanel(b, sp){
     return ul;
   };
   if (pickView === "game"){
-    const seen = new Set(), all = [...b.picks, ...(b.overs || [])].filter(c => !seen.has(c.pid + ":" + c.key) && seen.add(c.pid + ":" + c.key));
+    const seen = new Set(), all = [...picks, ...overs].filter(c => !seen.has(c.pid + ":" + c.key) && seen.add(c.pid + ":" + c.key));
     const head = c => sp === "ufc" ? `${c.name} vs ${c.opp}` : c.home === 0 ? `${c.team} at ${c.opp}` : c.home ? `${c.opp} at ${c.team}` : `${c.team} vs ${c.opp}`;
     box.append(pickHead("Picks by game", redraw),
       el("p", {class:"sub", text:`Every top pick and best over, one card a ${unit}, the ${unit} with the likeliest pick first. Tap a name to check it at your book's line.`}),
@@ -708,11 +755,11 @@ function bestPanel(b, sp){
           el("span", {text:` ${pickText(c, sp)}`}), el("small", {text:`Hit ${c.l10[0]} of his last ${c.l10[1]}.`}), propBooks(c, sp) || ""))}))));
     return box;
   }
-  box.append(pickHead("Most likely to hit", redraw), pickList(b.picks));
-  if ((b.overs || []).length){
+  box.append(pickHead("Most likely to hit", redraw), pickList(picks));
+  if (overs.length){
     box.append(el("h3", {text:"Best overs"}),
       el("p", {class:"sub", text:"Players finish under their usual line more often than over, so most top picks are unders. These are the overs the model likes most."}),
-      pickList(b.overs));
+      pickList(overs));
   }
   return box;
 }
@@ -862,7 +909,13 @@ function renderGames(d, sp){
   const app = $("app"); app.innerHTML = "";
   const q = schoolKey(gameView.filter);
   const has = g => !q || [g.home, g.away].some(a => { const t = teamInfo(d, a); return [t.name, t.short, a].some(x => schoolKey(x).includes(q)); });
-  const list = d.games.filter(has);
+  // the day picker: every day with games (all of them to start), counted before the team filter
+  const gDay = g => g.start ? localISO(new Date(g.start)) : "";
+  const dayCount = new Map();
+  d.games.forEach(g => { const k = gDay(g); if (k) dayCount.set(k, (dayCount.get(k) || 0) + 1); });
+  const days = [...dayCount].sort((a, b) => a[0].localeCompare(b[0])).map(([date, games]) => ({date, games}));
+  const chosen = chosenDays(sp, days.map(x => x.date), days.map(x => x.date));
+  const list = d.games.filter(g => has(g) && (!gDay(g) || days.length < 2 || chosen.includes(gDay(g))));
   const bt = d.backtest || {}, M = d.model || {};
   const intro = el("section", {class:"panel best"},
     el("h2", {text:`${sp === "cfb" ? "College football" : "College basketball"} game picks`}),
@@ -870,7 +923,7 @@ function renderGames(d, sp){
       + `The model rates every team from this season's scores, with last season's games carrying the early weeks, and adds a home-field edge of ${fmt1(M.hfa || 0)} points. `
       + `Where the book has posted a line, the chances start from that line and move ${Math.round((M.k || 0) * 100)}% of the way toward the model, because that's how much of the gap held up on last season's games.`
       + (bt.games ? ` Tested week by week on ${bt.season} (${bt.games.toLocaleString()} games), it picked the winner ${pct(bt.winner)} of the time${bt.ats ? ` and went ${pct(bt.ats.pct)} against the spread` : ""}${bt.ou ? ` and ${pct(bt.ou.pct)} on totals` : ""}.` : "")
-      + ` Beating -110 takes 52.4%, so treat spread and total picks as leans.`}), appsPicker(() => renderGames(d, sp)) || "");
+      + ` Beating -110 takes 52.4%, so treat spread and total picks as leans.`}), dayPicker(sp, days, chosen, () => renderGames(d, sp)) || "", appsPicker(() => renderGames(d, sp)) || "");
   app.append(intro);
   if (!d.games.length){
     intro.append(el("p", {class:"empty", style:"margin:0", text:`No ${gameSportName(sp)} games in the next few days. Picks show up here once the schedule has games.`}));
@@ -887,21 +940,27 @@ function renderGames(d, sp){
   const lean = all.filter(b => b.p > 0.5 && (b.market === "spread" || b.market === "total") && b.book);
   const withLine = new Set(lean.map(b => b.g.id));
   const legPool = [...lean, ...all.filter(b => b.p > 0.5 && b.market === "ml" && !withLine.has(b.g.id))];
-  const maxLegs = Math.min(gamesIn(legPool, b => b.g.id), MAX_LEGS), k = Math.min(parlayLegs, maxLegs);
-  const byLine = buildParlays(lean, k, 1, b => b.g.id)[0];
-  const top1 = byLine || buildParlays(legPool, k, 1, b => b.g.id)[0];
+  // more legs than games: games carry a second leg, a side (spread or winner) plus the total, never a spread and winner together
+  const good = all.filter(b => b.p > 0.5), kinds = new Map();
+  good.forEach(b => { if (!kinds.has(b.g.id)) kinds.set(b.g.id, new Set()); kinds.get(b.g.id).add(b.market === "total" ? "total" : "side"); });
+  const games = gamesIn(legPool, b => b.g.id), slots = [...kinds.values()].reduce((n, x) => n + x.size, 0);
+  const maxLegs = Math.min(Math.max(games, slots), MAX_LEGS), k = Math.min(parlayLegs, maxLegs);
+  const pairs = (b, legs) => { const same = legs.filter(l => l.g.id === b.g.id); return same.length < 2 && same.every(l => (l.market === "total") !== (b.market === "total")); };
+  const byLine = k <= games ? buildParlays(lean, k, 1, b => b.g.id)[0] : null;
+  const top1 = byLine || (k <= games ? buildParlays(legPool, k, 1, b => b.g.id)[0] : buildParlays(good, k, 1, b => b.g.id, () => null, pairs)[0]);
   const legs = top1 ? top1.legs : [];
   const box = el("section", {class:"panel best"});
   if (legs.length >= 2){
     const p = top1.p;
     box.append(el("div", {class:"bar-row pick-head"}, el("h3", {text:`Best ${k}-leg parlay`}), legPicker(maxLegs, redraw)),
-      parlayLegs > maxLegs ? el("p", {class:"sub", text:`There are ${maxLegs} games with a pick right now, so ${maxLegs} legs is the most at one leg per game.`}) : "",
+      k > games ? el("p", {class:"sub", text:`${games === 1 ? "There's 1 game" : `There are ${games} games`} on ${chosen.length > 1 ? "these days" : "this day"}, so some games carry two legs: a side and the total. College bets are game lines only (no player props), so a game can't give more than that here.${days.length > chosen.length ? " Add a day above for one leg per game." : ""} Same-game legs lean on each other a little.`}) : "",
+      parlayLegs > maxLegs ? el("p", {class:"sub", text:`${maxLegs} legs is the most from these games: college bets are game lines only (no player props), so each game gives at most a side and a total.`}) : "",
       el("div", {class:"parlays"}, el("div", {class:`parlay ${tier(p, k)}`},
       el("div", {class:"parlay-top"}, el("strong", {text:"Best parlay"}), chancePill(p, k)),
       el("ul", {}, ...legs.map(b => el("li", {}, el("button", {class:"linkish", text:betText(d, b), onclick: () => openGame(d, sp, b.g)}),
         el("small", {text:` ${matchup(d, b.g)}, ${pct(b.p)}`})))),
       parlayBooks(gameLegs(d, sp, legs), false) || "",
-      el("div", {class:"parlay-foot"}, el("small", {text:`Fair odds ${toAmerican(p)}. One leg per game.`}),
+      el("div", {class:"parlay-foot"}, el("small", {text:`Fair odds ${toAmerican(p)}. ${sharesGame(legs, b => b.g.id) ? "Some games carry two legs." : "One leg per game."}`}),
         el("button", {class:"btn tiny", text:"Check in slip", onclick: () => addBets(d, sp, legs, true)})))));
   }
   const pickList = (bs, why) => el("ol", {class:"picks"}, ...bs.map(b => el("li", {class:"pick"}, chancePill(b.p),

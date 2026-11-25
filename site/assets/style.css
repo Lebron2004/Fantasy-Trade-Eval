@@ -590,6 +590,13 @@ input.num.rec{width:3.4rem;padding:3px 6px;margin:0 2px}
 .legs-pick{display:inline-flex;align-items:center;gap:6px;font-size:.92rem;color:var(--muted)}
 .legs-pick input{width:3.4em;text-align:center;padding:4px 2px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit}
 .legs-pick button[disabled]{opacity:.4;cursor:default}
+.days-pick{margin:4px 0 10px}
+.days-pick>.sub{display:block;margin-top:4px}
+.days{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;scrollbar-width:thin}
+.day{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:1px;min-width:68px;padding:6px 10px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);font:inherit;cursor:pointer}
+.day small{color:var(--muted);font-size:.74rem}
+.day[aria-pressed="true"]{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.day[aria-pressed="true"] small{color:var(--on-brand);opacity:.85}
 .pgames{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px}
 .pgame{border:1px solid var(--line);border-top:5px solid var(--line);border-radius:14px;padding:10px 12px;min-width:0}
 .pgame.hi{border-top-color:var(--hi)} .pgame.mid{border-top-color:var(--mid)} .pgame.lo{border-top-color:var(--lo)}
