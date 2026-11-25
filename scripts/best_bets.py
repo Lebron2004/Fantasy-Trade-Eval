@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Trade Scale best bets: the props most likely to hit on each sport's next slate, and the best parlays (3 legs here; the page builds any size from the pool).
+Also writes "days": each day with games in the next week and its strongest picks, for the page's day picker.
 
 Reads the trained model's chances that train_props_model.py wrote into each player's file ("ml") and picks, for every
 player on the slate, the side of his main props the model likes most, at a line close to where a book would set it
@@ -54,6 +55,8 @@ TOP_OVERS = 6     # unders win most props, so the best overs get their own short
 PARLAY_POOL = 24
 PARLAYS = 3
 LEG_POOL = 60     # the page builds parlays of any size from this many of the strongest picks
+DAY_WINDOW = 7    # days the page's day picker reaches past the first day with games
+MAX_DAYS = 8
 NFL_TEAM = {"LAR": "LA", "JAC": "JAX", "WSH": "WAS"}   # Sleeper vs nflverse team codes
 
 
@@ -182,7 +185,7 @@ def build_sport(sport):
                          "home": ng.get("home"), "date": ng["date"], "time": ng.get("time"), "key": key, "line": line,
                          "side": side, "p": round(p, 3), "l10": [hits, len(last10)], "why": why})
         every.extend(mine)          # every prop he has, for the same-game parlays
-        if mine and doc["team"] in teams:
+        if mine:   # every upcoming player, so the page can show any day, not just the next slate
             cands.append(max(mine, key=lambda c: c["p"]))     # his single most likely prop
             ov = [c for c in mine if c["side"] == "over"]
             if ov:
@@ -200,6 +203,9 @@ def build_sport(sport):
         cands = [c for c in cands if first(c)]
         seen = set()
         overs = [c for c in overs if first(c)]
+    out["days"] = build_days(upcoming, teams, cands, overs)
+    cands = [c for c in cands if c["team"] in teams]
+    overs = [c for c in overs if c["team"] in teams]
     out["picks"] = cands[:TOP_PICKS]
     out["overs"] = overs[:TOP_OVERS]
 
@@ -233,6 +239,24 @@ def build_sport(sport):
     elif len(out["parlays"]) == 0:
         out["note"] = "Not enough games on this slate for a 3-leg parlay with one leg per game."
     return out
+
+
+def build_days(upcoming, teams, cands, overs):
+    """The page's day picker: every day with games in the next week, each with its strongest picks and best overs, so you
+    can bet any day (or several at once) instead of only the next slate. Only each team's next game is in the data, so a
+    team that plays sooner shows up on its later days after that game is played."""
+    dates = sorted({g["date"] for g in upcoming.values()})
+    if not dates:
+        return []
+    last = (date.fromisoformat(dates[0]) + timedelta(days=DAY_WINDOW)).isoformat()
+    slate_dates = {g["date"] for g in teams.values()}
+    days = []
+    for d in [x for x in dates if x <= last][:MAX_DAYS]:
+        games = {tuple(sorted((t, g["opp"] or ""))) for t, g in upcoming.items() if g["date"] == d}
+        days.append({"date": d, "games": len(games), "slate": d in slate_dates,
+                     "picks": [c for c in cands if c["date"] == d][:LEG_POOL],
+                     "overs": [c for c in overs if c["date"] == d][:TOP_OVERS]})
+    return days
 
 
 def write_sgp(sport, upcoming, every):
